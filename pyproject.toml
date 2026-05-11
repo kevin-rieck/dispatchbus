@@ -1,0 +1,44 @@
+[build-system]
+requires = ["hatchling>=1.25.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dispatchr"
+version = "0.1.0"
+description = "Dispatchr Python project."
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [
+  { name = "Motoko" },
+]
+dependencies = []
+
+[project.scripts]
+dispatchr = "dispatchr.__main__:main"
+
+[dependency-groups]
+dev = [
+  "ruff>=0.11.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src"]
+
+[tool.ruff.lint]
+select = [
+  "E",
+  "F",
+  "I",
+  "B",
+  "UP",
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dispatchr"]
