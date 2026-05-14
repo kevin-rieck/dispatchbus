@@ -4,7 +4,7 @@ from collections.abc import Callable
 from concurrent.futures import Executor, ThreadPoolExecutor
 from typing import Any, Literal
 
-from dispatchr.exceptions import EventPublicationError
+from dispatchr.exceptions import EventPublicationError, HandlerRegistrationError
 
 Handler = Callable[[Any], Any]
 EventConcurrency = Literal["concurrent", "sequential"]
@@ -17,6 +17,8 @@ class MessageRuntime:
         *,
         event_concurrency: EventConcurrency = "concurrent",
     ) -> None:
+        if event_concurrency not in {"concurrent", "sequential"}:
+            raise HandlerRegistrationError("event_concurrency must be 'concurrent' or 'sequential'")
         self._executor = executor or ThreadPoolExecutor()
         self._owns_executor = executor is None
         self._event_concurrency = event_concurrency

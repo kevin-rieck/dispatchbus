@@ -67,6 +67,13 @@ class MessageBus:
 
     async def aclose(self) -> None:
         await self._runtime.aclose()
+        if self._loop is not None:
+            self._loop.call_soon_threadsafe(self._loop.stop)
+            assert self._thread is not None
+            self._thread.join(timeout=1)
+            self._loop = None
+            self._thread = None
+            self._loop_ready.clear()
 
     def _run_sync(self, coroutine: Any, timeout: float | None = None) -> Any:
         self._ensure_background_loop()

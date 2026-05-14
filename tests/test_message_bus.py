@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import pytest
 
 from dispatchr.bus import MessageBus
-from dispatchr.exceptions import EventPublicationError
+from dispatchr.exceptions import EventPublicationError, HandlerRegistrationError
 
 
 @dataclass(frozen=True)
@@ -227,3 +227,24 @@ def test_public_api_exports_message_bus() -> None:
     from dispatchr import MessageBus
 
     assert MessageBus.__name__ == "MessageBus"
+
+
+def test_invalid_event_concurrency_raises() -> None:
+    with pytest.raises(HandlerRegistrationError):
+        MessageBus(event_concurrency="bogus")
+
+
+@pytest.mark.asyncio
+async def test_aclose_stops_background_loop_created_by_sync_bridge() -> None:
+    bus = MessageBus()
+
+    def handler(command: AddUser) -> str:
+        return command.name
+
+    bus.register_command_handler(AddUser, handler)
+    assert bus.send_sync(AddUser(name="ada")) == "ada"
+
+    await bus.aclose()
+
+    assert bus._loop is None
+    assert bus._thread is None
