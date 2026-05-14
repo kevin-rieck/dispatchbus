@@ -12,3 +12,11 @@ class DuplicateCommandHandlerError(HandlerRegistrationError):
 
 class NoCommandHandlerError(DispatchrError):
     """Raised when a command is dispatched without a registered handler."""
+
+
+class EventPublicationError(DispatchrError):
+    """Raised when one or more event handlers fail."""
+
+    def __init__(self, failures: list[Exception]) -> None:
+        super().__init__(f"{len(failures)} event handler(s) failed")
+        self.failures = failures
