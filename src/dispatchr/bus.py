@@ -62,8 +62,16 @@ class MessageBus:
                 dispatch_id=dispatch_id,
                 subscribers=self._subscribers,
             )
+            failures: list[Exception] = []
             for emitted_event in outcome.emitted_events:
-                await self.publish(emitted_event)
+                try:
+                    await self.publish(emitted_event)
+                except EventPublicationError as exc:
+                    failures.extend(exc.failures)
+                except Exception as exc:
+                    failures.append(exc)
+            if failures:
+                raise EventPublicationError(failures)
             return outcome.result
 
         pipeline = compose_middleware(self._middleware, final_handler)

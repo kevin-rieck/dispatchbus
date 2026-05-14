@@ -54,7 +54,11 @@ def _accepts_event_context(value: Callable[..., Any]) -> bool:
             inspect.Parameter.POSITIONAL_OR_KEYWORD,
         )
     ]
-    return len(positional) >= 2 and positional[1].name == "context"
+    return (
+        len(positional) >= 2
+        and positional[1].name == "context"
+        and positional[1].default is inspect.Parameter.empty
+    )
 
 
 class MessageRuntime:

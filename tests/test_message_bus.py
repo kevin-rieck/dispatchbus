@@ -226,6 +226,18 @@ async def test_handler_with_optional_second_positional_arg_is_not_treated_as_con
 
 
 @pytest.mark.asyncio
+async def test_handler_with_defaulted_context_parameter_is_not_treated_as_context_aware() -> None:
+    bus = MessageBus()
+
+    async def handler(command: AddUser, context: str = "X") -> str:
+        return context + command.name
+
+    bus.register_command_handler(AddUser, handler)
+
+    assert await bus.send(AddUser(name="ada")) == "Xada"
+
+
+@pytest.mark.asyncio
 async def test_partial_of_context_aware_handler_receives_context() -> None:
     bus = MessageBus()
     seen: list[int] = []
@@ -303,6 +315,32 @@ async def test_emitted_event_publication_failure_propagates_from_send() -> None:
 
     assert len(exc_info.value.failures) == 1
     assert isinstance(exc_info.value.failures[0], ValueError)
+
+
+@pytest.mark.asyncio
+async def test_send_attempts_later_emitted_events_after_earlier_publication_failure() -> None:
+    bus = MessageBus()
+    seen: list[int] = []
+
+    async def command_handler(command: AddUser, context) -> str:
+        context.emit(UserAdded(user_id=1))
+        context.emit(UserAdded(user_id=2))
+        return command.name
+
+    async def handler(event: UserAdded) -> None:
+        seen.append(event.user_id)
+        if event.user_id == 1:
+            raise ValueError("first event boom")
+
+    bus.register_command_handler(AddUser, command_handler)
+    bus.register_event_handler(UserAdded, handler)
+
+    with pytest.raises(EventPublicationError) as exc_info:
+        await bus.send(AddUser(name="ada"))
+
+    assert seen == [1, 2]
+    assert [type(failure) for failure in exc_info.value.failures] == [ValueError]
+    assert [str(failure) for failure in exc_info.value.failures] == ["first event boom"]
 
 
 @pytest.mark.asyncio
