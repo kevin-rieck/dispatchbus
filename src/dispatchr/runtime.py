@@ -2,11 +2,13 @@ import asyncio
 import inspect
 from collections.abc import Callable, Sequence
 from concurrent.futures import Executor, ThreadPoolExecutor
+from dataclasses import dataclass
 from datetime import datetime
 from time import perf_counter
 from typing import Any, Literal
 
-from dispatchr.exceptions import EventPublicationError, HandlerRegistrationError
+from dispatchr.context import EventContext
+from dispatchr.exceptions import HandlerRegistrationError
 from dispatchr.observability import (
     HandlerFailed,
     HandlerFinished,
@@ -16,14 +18,43 @@ from dispatchr.observability import (
     handler_name,
 )
 
-Handler = Callable[[Any], Any]
+Handler = Callable[..., Any]
 EventConcurrency = Literal["concurrent", "sequential"]
+
+
+@dataclass(frozen=True)
+class HandlerOutcome:
+    result: Any
+    emitted_events: tuple[object, ...]
+
+
+@dataclass(frozen=True)
+class EventDispatchOutcome:
+    handler_outcomes: tuple[HandlerOutcome, ...]
+    failures: tuple[Exception, ...]
 
 
 def _is_async_callable(value: Callable[..., Any]) -> bool:
     return inspect.iscoroutinefunction(value) or (
         callable(value) and inspect.iscoroutinefunction(value.__call__)
     )
+
+
+def _callable_signature(value: Callable[..., Any]) -> inspect.Signature:
+    return inspect.signature(value)
+
+
+def _accepts_event_context(value: Callable[..., Any]) -> bool:
+    positional = [
+        parameter
+        for parameter in _callable_signature(value).parameters.values()
+        if parameter.kind
+        in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        )
+    ]
+    return len(positional) >= 2 and positional[1].name == "context"
 
 
 class MessageRuntime:
@@ -47,7 +78,7 @@ class MessageRuntime:
         *,
         dispatch_id: str,
         subscribers: Sequence[Subscriber],
-    ) -> Any:
+    ) -> HandlerOutcome:
         return await self._call_handler_with_events(
             handler,
             message,
@@ -63,23 +94,26 @@ class MessageRuntime:
         *,
         dispatch_id: str,
         subscribers: Sequence[Subscriber],
-    ) -> None:
+    ) -> EventDispatchOutcome:
         if self._event_concurrency == "sequential":
             failures: list[Exception] = []
+            outcomes: list[HandlerOutcome] = []
             for handler in handlers:
                 try:
-                    await self._call_handler_with_events(
+                    outcome = await self._call_handler_with_events(
                         handler,
                         message,
                         operation="publish",
                         dispatch_id=dispatch_id,
                         subscribers=subscribers,
                     )
+                    outcomes.append(outcome)
                 except Exception as exc:
                     failures.append(exc)
-            if failures:
-                raise EventPublicationError(failures)
-            return
+            return EventDispatchOutcome(
+                handler_outcomes=tuple(outcomes),
+                failures=tuple(failures),
+            )
 
         tasks = [
             asyncio.create_task(
@@ -96,10 +130,19 @@ class MessageRuntime:
         for task in tasks:
             self._in_flight.add(task)
             task.add_done_callback(self._in_flight.discard)
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        failures = [result for result in results if isinstance(result, Exception)]
-        if failures:
-            raise EventPublicationError(failures)
+        concurrent_failures: list[Exception] = []
+        concurrent_outcomes: list[HandlerOutcome] = []
+        for task in asyncio.as_completed(tasks):
+            try:
+                result = await task
+            except Exception as exc:
+                concurrent_failures.append(exc)
+            else:
+                concurrent_outcomes.append(result)
+        return EventDispatchOutcome(
+            handler_outcomes=tuple(concurrent_outcomes),
+            failures=tuple(concurrent_failures),
+        )
 
     async def notify_subscribers(self, subscribers: Sequence[Subscriber], event: object) -> None:
         if not subscribers:
@@ -118,9 +161,10 @@ class MessageRuntime:
         operation: Operation,
         dispatch_id: str,
         subscribers: Sequence[Subscriber],
-    ) -> Any:
+    ) -> HandlerOutcome:
         started = perf_counter()
         name = handler_name(handler)
+        context = EventContext()
         await self.notify_subscribers(
             subscribers,
             HandlerStarted(
@@ -134,7 +178,7 @@ class MessageRuntime:
             ),
         )
         try:
-            result = await self._call_handler(handler, message)
+            result = await self._call_handler(handler, message, context)
         except Exception as exc:
             await self.notify_subscribers(
                 subscribers,
@@ -165,12 +209,16 @@ class MessageRuntime:
                 duration_ms=(perf_counter() - started) * 1000,
             ),
         )
-        return result
+        return HandlerOutcome(result=result, emitted_events=tuple(context.events))
 
-    async def _call_handler(self, handler: Handler, message: Any) -> Any:
+    async def _call_handler(self, handler: Handler, message: Any, context: EventContext) -> Any:
         if _is_async_callable(handler):
+            if _accepts_event_context(handler):
+                return await handler(message, context)
             return await handler(message)
         loop = asyncio.get_running_loop()
+        if _accepts_event_context(handler):
+            return await loop.run_in_executor(self._executor, handler, message, context)
         return await loop.run_in_executor(self._executor, handler, message)
 
     async def _call_subscriber(self, subscriber: Subscriber, event: object) -> Any:
