@@ -10,6 +10,7 @@ Minimal Python project scaffolded for modern tooling:
 ```powershell
 uv sync --dev
 uv run ruff check .
+uv run pyright
 uv run ruff format .
 uv run dispatchr
 uv build
