@@ -10,9 +10,14 @@ from dispatchr.runtime import MessageRuntime
 
 
 class MessageBus:
-    def __init__(self, middleware: Sequence[Middleware] | None = None) -> None:
+    def __init__(
+        self,
+        middleware: Sequence[Middleware] | None = None,
+        *,
+        event_concurrency: str = "concurrent",
+    ) -> None:
         self._registry = HandlerRegistry()
-        self._runtime = MessageRuntime()
+        self._runtime = MessageRuntime(event_concurrency=event_concurrency)
         self._middleware = list(middleware or [])
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None

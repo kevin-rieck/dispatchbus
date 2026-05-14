@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import dataclass
 
 import pytest
@@ -174,3 +175,49 @@ def test_publish_sync_runs_event_handlers_through_background_runtime() -> None:
 
     assert seen == ["event:21"]
     bus.close()
+
+
+@pytest.mark.asyncio
+async def test_publish_can_run_handlers_sequentially() -> None:
+    bus = MessageBus(event_concurrency="sequential")
+    seen: list[str] = []
+
+    async def first(event: UserAdded) -> None:
+        seen.append("first")
+
+    async def second(event: UserAdded) -> None:
+        seen.append("second")
+
+    bus.register_event_handler(UserAdded, first)
+    bus.register_event_handler(UserAdded, second)
+
+    await bus.publish(UserAdded(user_id=1))
+
+    assert seen == ["first", "second"]
+
+
+@pytest.mark.asyncio
+async def test_publish_can_run_handlers_concurrently() -> None:
+    bus = MessageBus(event_concurrency="concurrent")
+    started = asyncio.Event()
+    release = asyncio.Event()
+    seen: list[str] = []
+
+    async def first(event: UserAdded) -> None:
+        seen.append("first:start")
+        started.set()
+        await release.wait()
+        seen.append("first:end")
+
+    async def second(event: UserAdded) -> None:
+        await started.wait()
+        seen.append("second:start")
+        release.set()
+        seen.append("second:end")
+
+    bus.register_event_handler(UserAdded, first)
+    bus.register_event_handler(UserAdded, second)
+
+    await bus.publish(UserAdded(user_id=2))
+
+    assert seen == ["first:start", "second:start", "second:end", "first:end"]
