@@ -135,7 +135,9 @@ class MessageBus:
             ),
         )
 
-        async def final_handler(message: Any) -> tuple[list[Any], list[Exception]]:
+        failures: list[Exception] = []
+
+        async def final_handler(message: Any) -> None:
             follow_up_tasks: list[asyncio.Task[None]] = []
 
             async def on_outcome(outcome: Any) -> None:
@@ -149,7 +151,7 @@ class MessageBus:
                 subscribers=self._subscribers,
                 on_outcome=on_outcome,
             )
-            failures = list(dispatch_outcome.failures)
+            failures.extend(dispatch_outcome.failures)
             if follow_up_tasks:
                 nested_results = await asyncio.gather(*follow_up_tasks, return_exceptions=True)
                 for result in nested_results:
@@ -157,11 +159,12 @@ class MessageBus:
                         failures.extend(result.failures)
                     elif isinstance(result, Exception):
                         failures.append(result)
-            return [], failures
+            if failures:
+                raise EventPublicationError(failures)
 
         pipeline = compose_middleware(self._middleware, final_handler)
         try:
-            emitted_events, failures = await pipeline(event)
+            await pipeline(event)
         except Exception:
             await self._runtime.notify_subscribers(
                 self._subscribers,
@@ -191,7 +194,7 @@ class MessageBus:
                 success=True,
             ),
         )
-        return emitted_events, failures
+        return [], []
 
     def send_sync(self, command: Any, timeout: float | None = None) -> Any:
         return self._run_sync(self.send(command), timeout=timeout)
