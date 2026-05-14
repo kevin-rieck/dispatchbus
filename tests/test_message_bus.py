@@ -81,3 +81,60 @@ async def test_publish_raises_aggregate_error() -> None:
 
     assert len(exc_info.value.failures) == 1
     assert isinstance(exc_info.value.failures[0], ValueError)
+
+
+@pytest.mark.asyncio
+async def test_send_applies_middleware_in_order() -> None:
+    events: list[str] = []
+
+    async def first(message, call_next):
+        events.append("first:before")
+        result = await call_next(message)
+        events.append("first:after")
+        return result
+
+    async def second(message, call_next):
+        events.append("second:before")
+        result = await call_next(message)
+        events.append("second:after")
+        return result
+
+    bus = MessageBus(middleware=[first, second])
+
+    async def handler(command: AddUser) -> str:
+        events.append("handler")
+        return command.name
+
+    bus.register_command_handler(AddUser, handler)
+
+    result = await bus.send(AddUser(name="ada"))
+
+    assert result == "ada"
+    assert events == [
+        "first:before",
+        "second:before",
+        "handler",
+        "second:after",
+        "first:after",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_publish_applies_middleware_once_for_the_operation() -> None:
+    events: list[str] = []
+
+    async def middleware(message, call_next):
+        events.append("before")
+        await call_next(message)
+        events.append("after")
+
+    bus = MessageBus(middleware=[middleware])
+
+    async def handler(event: UserAdded) -> None:
+        events.append(f"handler:{event.user_id}")
+
+    bus.register_event_handler(UserAdded, handler)
+
+    await bus.publish(UserAdded(user_id=9))
+
+    assert events == ["before", "handler:9", "after"]
