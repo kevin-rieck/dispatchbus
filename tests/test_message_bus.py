@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -6,6 +7,7 @@ import pytest
 
 from dispatchr.bus import MessageBus
 from dispatchr.exceptions import EventPublicationError, HandlerRegistrationError
+from dispatchr.runtime import EventConcurrency
 
 
 @dataclass(frozen=True)
@@ -228,6 +230,12 @@ def test_public_api_exports_message_bus() -> None:
     from dispatchr import MessageBus
 
     assert MessageBus.__name__ == "MessageBus"
+
+
+def test_message_bus_event_concurrency_annotation_matches_runtime_type() -> None:
+    annotation = inspect.signature(MessageBus.__init__).parameters["event_concurrency"].annotation
+
+    assert annotation == EventConcurrency
 
 
 def test_invalid_event_concurrency_raises() -> None:
