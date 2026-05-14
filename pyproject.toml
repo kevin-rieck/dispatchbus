@@ -9,7 +9,7 @@ description = "Dispatchr Python project."
 readme = "README.md"
 requires-python = ">=3.12"
 authors = [
-  { name = "Motoko" },
+  { name = "Kevin Rieck" },
 ]
 dependencies = []
 
