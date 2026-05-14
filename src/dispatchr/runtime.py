@@ -44,21 +44,35 @@ def _callable_signature(value: Callable[..., Any]) -> inspect.Signature:
     return inspect.signature(value)
 
 
-def _accepts_event_context(value: Callable[..., Any]) -> bool:
+def _context_parameter(value: Callable[..., Any]) -> inspect.Parameter | None:
+    parameters = list(_callable_signature(value).parameters.values())
     positional = [
         parameter
-        for parameter in _callable_signature(value).parameters.values()
+        for parameter in parameters
         if parameter.kind
         in (
             inspect.Parameter.POSITIONAL_ONLY,
             inspect.Parameter.POSITIONAL_OR_KEYWORD,
         )
     ]
-    return (
+    if (
         len(positional) >= 2
         and positional[1].name == "context"
         and positional[1].default is inspect.Parameter.empty
-    )
+    ):
+        return positional[1]
+    for parameter in parameters:
+        if (
+            parameter.kind is inspect.Parameter.KEYWORD_ONLY
+            and parameter.name == "context"
+            and parameter.default is inspect.Parameter.empty
+        ):
+            return parameter
+    return None
+
+
+def _accepts_event_context(value: Callable[..., Any]) -> bool:
+    return _context_parameter(value) is not None
 
 
 class MessageRuntime:
@@ -221,12 +235,20 @@ class MessageRuntime:
         return HandlerOutcome(result=result, emitted_events=tuple(context.events))
 
     async def _call_handler(self, handler: Handler, message: Any, context: EventContext) -> Any:
+        context_parameter = _context_parameter(handler)
         if _is_async_callable(handler):
-            if _accepts_event_context(handler):
+            if context_parameter is not None:
+                if context_parameter.kind is inspect.Parameter.KEYWORD_ONLY:
+                    return await handler(message, context=context)
                 return await handler(message, context)
             return await handler(message)
         loop = asyncio.get_running_loop()
-        if _accepts_event_context(handler):
+        if context_parameter is not None:
+            if context_parameter.kind is inspect.Parameter.KEYWORD_ONLY:
+                return await loop.run_in_executor(
+                    self._executor,
+                    lambda: handler(message, context=context),
+                )
             return await loop.run_in_executor(self._executor, handler, message, context)
         return await loop.run_in_executor(self._executor, handler, message)
 

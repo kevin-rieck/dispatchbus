@@ -257,6 +257,23 @@ async def test_partial_of_context_aware_handler_receives_context() -> None:
 
 
 @pytest.mark.asyncio
+async def test_handler_with_keyword_only_context_receives_event_context() -> None:
+    bus = MessageBus(event_concurrency="sequential")
+    seen: list[int] = []
+
+    async def handler(event: UserAdded, *, context) -> None:
+        seen.append(event.user_id)
+        if event.user_id == 1:
+            context.emit(UserAdded(user_id=2))
+
+    bus.register_event_handler(UserAdded, handler)
+
+    await bus.publish(UserAdded(user_id=1))
+
+    assert seen == [1, 2]
+
+
+@pytest.mark.asyncio
 async def test_publish_fans_out_to_all_handlers() -> None:
     bus = MessageBus()
     seen: list[str] = []
