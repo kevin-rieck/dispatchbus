@@ -8,12 +8,24 @@ from dispatchr.exceptions import (
     HandlerRegistrationError,
     NoCommandHandlerError,
 )
+from dispatchr.observability import (
+    DispatchFinished,
+    DispatchStarted,
+    HandlerFailed,
+    HandlerFinished,
+    HandlerStarted,
+)
 
 __all__ = [
+    "DispatchFinished",
+    "DispatchStarted",
     "DispatchrError",
     "DuplicateCommandHandlerError",
     "EventPublicationError",
+    "HandlerFailed",
+    "HandlerFinished",
     "HandlerRegistrationError",
+    "HandlerStarted",
     "MessageBus",
     "NoCommandHandlerError",
 ]

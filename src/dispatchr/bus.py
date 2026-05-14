@@ -2,9 +2,12 @@ import asyncio
 import threading
 from collections.abc import Sequence
 from concurrent.futures import Future
+from datetime import datetime
+from time import perf_counter
 from typing import Any
 
 from dispatchr.middleware import Middleware, compose_middleware
+from dispatchr.observability import DispatchFinished, DispatchStarted, Subscriber, new_dispatch_id
 from dispatchr.registry import HandlerRegistry
 from dispatchr.runtime import EventConcurrency, MessageRuntime
 
@@ -15,10 +18,12 @@ class MessageBus:
         middleware: Sequence[Middleware] | None = None,
         *,
         event_concurrency: EventConcurrency = "concurrent",
+        subscribers: Sequence[Subscriber] | None = None,
     ) -> None:
         self._registry = HandlerRegistry()
         self._runtime = MessageRuntime(event_concurrency=event_concurrency)
         self._middleware = list(middleware or [])
+        self._subscribers = list(subscribers or [])
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._loop_ready = threading.Event()
@@ -29,23 +34,123 @@ class MessageBus:
     def register_event_handler(self, message_type: type[Any], handler: Any) -> None:
         self._registry.register_event_handler(message_type, handler)
 
+    def add_subscriber(self, subscriber: Subscriber) -> None:
+        self._subscribers.append(subscriber)
+
     async def send(self, command: Any) -> Any:
         handler = self._registry.get_command_handler(type(command))
+        dispatch_id = new_dispatch_id()
+        started = perf_counter()
+        await self._runtime.notify_subscribers(
+            self._subscribers,
+            DispatchStarted(
+                message=command,
+                message_type=type(command),
+                operation="send",
+                timestamp=datetime.now(),
+                dispatch_id=dispatch_id,
+                handler_count=1,
+            ),
+        )
 
         async def final_handler(message: Any) -> Any:
-            return await self._runtime.dispatch_command(handler, message)
+            return await self._runtime.dispatch_command(
+                handler,
+                message,
+                dispatch_id=dispatch_id,
+                subscribers=self._subscribers,
+            )
 
         pipeline = compose_middleware(self._middleware, final_handler)
-        return await pipeline(command)
+        try:
+            result = await pipeline(command)
+        except Exception:
+            await self._runtime.notify_subscribers(
+                self._subscribers,
+                DispatchFinished(
+                    message=command,
+                    message_type=type(command),
+                    operation="send",
+                    timestamp=datetime.now(),
+                    dispatch_id=dispatch_id,
+                    handler_count=1,
+                    duration_ms=(perf_counter() - started) * 1000,
+                    success=False,
+                ),
+            )
+            raise
+
+        await self._runtime.notify_subscribers(
+            self._subscribers,
+            DispatchFinished(
+                message=command,
+                message_type=type(command),
+                operation="send",
+                timestamp=datetime.now(),
+                dispatch_id=dispatch_id,
+                handler_count=1,
+                duration_ms=(perf_counter() - started) * 1000,
+                success=True,
+            ),
+        )
+        return result
 
     async def publish(self, event: Any) -> None:
         handlers = self._registry.get_event_handlers(type(event))
+        dispatch_id = new_dispatch_id()
+        started = perf_counter()
+        await self._runtime.notify_subscribers(
+            self._subscribers,
+            DispatchStarted(
+                message=event,
+                message_type=type(event),
+                operation="publish",
+                timestamp=datetime.now(),
+                dispatch_id=dispatch_id,
+                handler_count=len(handlers),
+            ),
+        )
 
         async def final_handler(message: Any) -> None:
-            await self._runtime.dispatch_event(handlers, message)
+            await self._runtime.dispatch_event(
+                handlers,
+                message,
+                dispatch_id=dispatch_id,
+                subscribers=self._subscribers,
+            )
 
         pipeline = compose_middleware(self._middleware, final_handler)
-        await pipeline(event)
+        try:
+            await pipeline(event)
+        except Exception:
+            await self._runtime.notify_subscribers(
+                self._subscribers,
+                DispatchFinished(
+                    message=event,
+                    message_type=type(event),
+                    operation="publish",
+                    timestamp=datetime.now(),
+                    dispatch_id=dispatch_id,
+                    handler_count=len(handlers),
+                    duration_ms=(perf_counter() - started) * 1000,
+                    success=False,
+                ),
+            )
+            raise
+
+        await self._runtime.notify_subscribers(
+            self._subscribers,
+            DispatchFinished(
+                message=event,
+                message_type=type(event),
+                operation="publish",
+                timestamp=datetime.now(),
+                dispatch_id=dispatch_id,
+                handler_count=len(handlers),
+                duration_ms=(perf_counter() - started) * 1000,
+                success=True,
+            ),
+        )
 
     def send_sync(self, command: Any, timeout: float | None = None) -> Any:
         return self._run_sync(self.send(command), timeout=timeout)
