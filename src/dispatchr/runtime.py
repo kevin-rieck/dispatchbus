@@ -1,6 +1,6 @@
 import asyncio
 import inspect
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from concurrent.futures import Executor, ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
@@ -94,6 +94,7 @@ class MessageRuntime:
         *,
         dispatch_id: str,
         subscribers: Sequence[Subscriber],
+        on_outcome: Callable[[HandlerOutcome], Awaitable[None]] | None = None,
     ) -> EventDispatchOutcome:
         if self._event_concurrency == "sequential":
             failures: list[Exception] = []
@@ -108,6 +109,8 @@ class MessageRuntime:
                         subscribers=subscribers,
                     )
                     outcomes.append(outcome)
+                    if on_outcome is not None:
+                        await on_outcome(outcome)
                 except Exception as exc:
                     failures.append(exc)
             return EventDispatchOutcome(
@@ -139,6 +142,8 @@ class MessageRuntime:
                 concurrent_failures.append(exc)
             else:
                 concurrent_outcomes.append(result)
+                if on_outcome is not None:
+                    await on_outcome(result)
         return EventDispatchOutcome(
             handler_outcomes=tuple(concurrent_outcomes),
             failures=tuple(concurrent_failures),

@@ -649,9 +649,11 @@ async def test_concurrent_event_handlers_can_interleave_emitted_follow_up_events
 
 
 @pytest.mark.asyncio
-async def test_concurrent_handlers_publish_follow_up_events_without_waiting_for_slower_siblings() -> None:
+async def test_concurrent_handlers_publish_follow_up_events_without_waiting_for_slower_siblings() -> (
+    None
+):
     bus = MessageBus(event_concurrency="concurrent")
-    release_first = asyncio.Event()
+    waiting_started = asyncio.Event()
     follow_up_ran = asyncio.Event()
     seen: list[str] = []
 
@@ -659,16 +661,16 @@ async def test_concurrent_handlers_publish_follow_up_events_without_waiting_for_
         if event.user_id != 1:
             return
         seen.append("waiting:start")
+        waiting_started.set()
         await follow_up_ran.wait()
         seen.append("waiting:end")
-        release_first.set()
 
     async def emitting_handler(event: UserAdded, context) -> None:
         if event.user_id != 1:
             return
+        await waiting_started.wait()
         seen.append("emitter:start")
         context.emit(UserAdded(user_id=2))
-        await release_first.wait()
         seen.append("emitter:end")
 
     async def follow_up_handler(event: UserAdded) -> None:
@@ -686,9 +688,9 @@ async def test_concurrent_handlers_publish_follow_up_events_without_waiting_for_
     assert seen == [
         "waiting:start",
         "emitter:start",
+        "emitter:end",
         "follow-up",
         "waiting:end",
-        "emitter:end",
     ]
 
 
