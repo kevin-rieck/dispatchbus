@@ -18,6 +18,8 @@ dispatchr = "dispatchr.__main__:main"
 
 [dependency-groups]
 dev = [
+  "pytest>=9.0.0",
+  "pytest-asyncio>=1.3.0",
   "ruff>=0.11.0",
 ]
 
