@@ -221,3 +221,9 @@ async def test_publish_can_run_handlers_concurrently() -> None:
     await bus.publish(UserAdded(user_id=2))
 
     assert seen == ["first:start", "second:start", "second:end", "first:end"]
+
+
+def test_public_api_exports_message_bus() -> None:
+    from dispatchr import MessageBus
+
+    assert MessageBus.__name__ == "MessageBus"
