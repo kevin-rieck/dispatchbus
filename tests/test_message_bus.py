@@ -138,3 +138,39 @@ async def test_publish_applies_middleware_once_for_the_operation() -> None:
     await bus.publish(UserAdded(user_id=9))
 
     assert events == ["before", "handler:9", "after"]
+
+
+@pytest.mark.asyncio
+async def test_publish_with_no_subscribers_is_a_no_op() -> None:
+    bus = MessageBus()
+
+    await bus.publish(UserAdded(user_id=11))
+
+
+def test_send_sync_runs_command_through_background_runtime() -> None:
+    bus = MessageBus()
+
+    def handler(command: AddUser) -> str:
+        return f"sync:{command.name}"
+
+    bus.register_command_handler(AddUser, handler)
+
+    result = bus.send_sync(AddUser(name="ada"))
+
+    assert result == "sync:ada"
+    bus.close()
+
+
+def test_publish_sync_runs_event_handlers_through_background_runtime() -> None:
+    bus = MessageBus()
+    seen: list[str] = []
+
+    def handler(event: UserAdded) -> None:
+        seen.append(f"event:{event.user_id}")
+
+    bus.register_event_handler(UserAdded, handler)
+
+    bus.publish_sync(UserAdded(user_id=21))
+
+    assert seen == ["event:21"]
+    bus.close()
