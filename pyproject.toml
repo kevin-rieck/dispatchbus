@@ -43,5 +43,9 @@ quote-style = "double"
 indent-style = "space"
 line-ending = "lf"
 
+[tool.pyright]
+pythonVersion = "3.12"
+include = ["src"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/dispatchr"]

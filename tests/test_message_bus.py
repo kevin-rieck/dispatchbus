@@ -1,5 +1,6 @@
 import asyncio
 from dataclasses import dataclass
+from typing import Any, cast
 
 import pytest
 
@@ -231,7 +232,7 @@ def test_public_api_exports_message_bus() -> None:
 
 def test_invalid_event_concurrency_raises() -> None:
     with pytest.raises(HandlerRegistrationError):
-        MessageBus(event_concurrency="bogus")
+        MessageBus(event_concurrency=cast(Any, "bogus"))
 
 
 @pytest.mark.asyncio

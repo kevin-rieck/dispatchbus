@@ -6,7 +6,7 @@ from typing import Any
 
 from dispatchr.middleware import Middleware, compose_middleware
 from dispatchr.registry import HandlerRegistry
-from dispatchr.runtime import MessageRuntime
+from dispatchr.runtime import EventConcurrency, MessageRuntime
 
 
 class MessageBus:
@@ -14,7 +14,7 @@ class MessageBus:
         self,
         middleware: Sequence[Middleware] | None = None,
         *,
-        event_concurrency: str = "concurrent",
+        event_concurrency: EventConcurrency = "concurrent",
     ) -> None:
         self._registry = HandlerRegistry()
         self._runtime = MessageRuntime(event_concurrency=event_concurrency)
