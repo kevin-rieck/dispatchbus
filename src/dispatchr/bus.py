@@ -277,6 +277,8 @@ class MessageBus:
     async def _enter_root_dispatch(self) -> tuple[contextvars.Token[int], bool]:
         current_depth = self._admission_depth.get()
         async with self._drain_condition:
+            if self._state is _BusState.CLOSED:
+                raise BusDrainingError("message bus is draining")
             if current_depth == 0 and self._state is not _BusState.OPEN:
                 raise BusDrainingError("message bus is draining")
             self._in_flight_dispatches += 1

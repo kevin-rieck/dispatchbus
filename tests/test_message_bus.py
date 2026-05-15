@@ -1097,6 +1097,52 @@ async def test_accepted_work_can_call_public_publish_during_drain() -> None:
     await close_task
 
 
+@pytest.mark.asyncio
+async def test_detached_tasks_are_rejected_after_bus_closes() -> None:
+    bus = MessageBus()
+    started = asyncio.Event()
+    release = asyncio.Event()
+    allow_detached_publish = asyncio.Event()
+    detached_publish: asyncio.Task[None] | None = None
+    seen: list[int] = []
+
+    async def command_handler(command: AddUser) -> str:
+        nonlocal detached_publish
+        started.set()
+        await release.wait()
+
+        async def detached() -> None:
+            await allow_detached_publish.wait()
+            await bus.publish(UserAdded(user_id=len(command.name)))
+
+        detached_publish = asyncio.create_task(detached())
+        return command.name.upper()
+
+    async def event_handler(event: UserAdded) -> None:
+        seen.append(event.user_id)
+
+    bus.register_command_handler(AddUser, command_handler)
+    bus.register_event_handler(UserAdded, event_handler)
+
+    first_send = asyncio.create_task(bus.send(AddUser(name="ada")))
+    await started.wait()
+
+    close_task = asyncio.create_task(bus.aclose())
+    await asyncio.sleep(0)
+    release.set()
+
+    assert await first_send == "ADA"
+    await close_task
+
+    assert detached_publish is not None
+    allow_detached_publish.set()
+
+    with pytest.raises(BusDrainingError, match="message bus is draining"):
+        await detached_publish
+
+    assert seen == []
+
+
 def test_close_rejects_new_sync_work() -> None:
     bus = MessageBus()
 
