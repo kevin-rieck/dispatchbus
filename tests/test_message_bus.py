@@ -1095,3 +1095,19 @@ async def test_accepted_work_can_call_public_publish_during_drain() -> None:
     assert await first_send == "ADA"
     assert seen == [3]
     await close_task
+
+
+def test_close_rejects_new_sync_work() -> None:
+    bus = MessageBus()
+
+    def handler(command: AddUser) -> str:
+        return command.name.upper()
+
+    bus.register_command_handler(AddUser, handler)
+
+    assert bus.send_sync(AddUser(name="ada")) == "ADA"
+
+    bus.close()
+
+    with pytest.raises(BusDrainingError, match="message bus is draining"):
+        bus.send_sync(AddUser(name="grace"))

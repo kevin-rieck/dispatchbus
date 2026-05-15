@@ -241,8 +241,10 @@ class MessageBus:
 
     def close(self) -> None:
         if self._loop is None:
+            asyncio.run(self._drain_and_close_runtime())
             return
-        future = asyncio.run_coroutine_threadsafe(self._runtime.aclose(), self._loop)
+
+        future = asyncio.run_coroutine_threadsafe(self._drain_and_close_runtime(), self._loop)
         future.result()
         self._loop.call_soon_threadsafe(self._loop.stop)
         assert self._thread is not None
@@ -252,6 +254,16 @@ class MessageBus:
         self._loop_ready.clear()
 
     async def aclose(self) -> None:
+        await self._drain_and_close_runtime()
+        if self._loop is not None:
+            self._loop.call_soon_threadsafe(self._loop.stop)
+            assert self._thread is not None
+            self._thread.join(timeout=1)
+            self._loop = None
+            self._thread = None
+            self._loop_ready.clear()
+
+    async def _drain_and_close_runtime(self) -> None:
         async with self._drain_condition:
             if self._state is _BusState.CLOSED:
                 return
@@ -261,13 +273,6 @@ class MessageBus:
             self._state = _BusState.CLOSED
 
         await self._runtime.aclose()
-        if self._loop is not None:
-            self._loop.call_soon_threadsafe(self._loop.stop)
-            assert self._thread is not None
-            self._thread.join(timeout=1)
-            self._loop = None
-            self._thread = None
-            self._loop_ready.clear()
 
     async def _enter_root_dispatch(self) -> tuple[contextvars.Token[int], bool]:
         current_depth = self._admission_depth.get()
