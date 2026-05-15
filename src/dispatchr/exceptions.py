@@ -20,3 +20,7 @@ class EventPublicationError(DispatchrError):
     def __init__(self, failures: list[Exception]) -> None:
         super().__init__(f"{len(failures)} event handler(s) failed")
         self.failures = failures
+
+
+class BusDrainingError(DispatchrError):
+    """Raised when the message bus is draining and not accepting new messages."""
