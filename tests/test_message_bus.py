@@ -1064,3 +1064,34 @@ async def test_publish_rejects_new_work_once_aclose_starts() -> None:
 
     await first_publish
     await close_task
+
+
+@pytest.mark.asyncio
+async def test_accepted_work_can_call_public_publish_during_drain() -> None:
+    bus = MessageBus()
+    started = asyncio.Event()
+    release = asyncio.Event()
+    seen: list[int] = []
+
+    async def command_handler(command: AddUser) -> str:
+        started.set()
+        await release.wait()
+        await bus.publish(UserAdded(user_id=len(command.name)))
+        return command.name.upper()
+
+    async def event_handler(event: UserAdded) -> None:
+        seen.append(event.user_id)
+
+    bus.register_command_handler(AddUser, command_handler)
+    bus.register_event_handler(UserAdded, event_handler)
+
+    first_send = asyncio.create_task(bus.send(AddUser(name="ada")))
+    await started.wait()
+
+    close_task = asyncio.create_task(bus.aclose())
+    await asyncio.sleep(0)
+    release.set()
+
+    assert await first_send == "ADA"
+    assert seen == [3]
+    await close_task
