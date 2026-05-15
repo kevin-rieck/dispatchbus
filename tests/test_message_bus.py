@@ -1,5 +1,6 @@
 import asyncio
 import inspect
+import threading
 from dataclasses import FrozenInstanceError, dataclass
 from datetime import datetime
 from functools import partial
@@ -560,9 +561,8 @@ async def test_original_and_emitted_event_failures_are_both_reported() -> None:
 
 
 @pytest.mark.asyncio
-async def test_original_failures_are_preserved_when_emitted_publish_raises_non_aggregate_error() -> (
-    None
-):
+async def test_original_failures_are_preserved_when_emitted_publish_raises_non_aggregate_error(
+) -> None:
     async def middleware(message, call_next):
         if isinstance(message, UserAdded) and message.user_id == 2:
             raise RuntimeError("mw boom")
@@ -704,9 +704,8 @@ async def test_concurrent_event_handlers_can_interleave_emitted_follow_up_events
 
 
 @pytest.mark.asyncio
-async def test_concurrent_handlers_publish_follow_up_events_without_waiting_for_slower_siblings() -> (
-    None
-):
+async def test_concurrent_handlers_publish_follow_up_events_without_waiting_for_slower_siblings(
+) -> None:
     bus = MessageBus(event_concurrency="concurrent")
     waiting_started = asyncio.Event()
     follow_up_ran = asyncio.Event()
@@ -1001,6 +1000,41 @@ async def test_aclose_stops_background_loop_created_by_sync_bridge() -> None:
 
     await bus.aclose()
 
+    assert bus._loop is None
+    assert bus._thread is None
+
+
+@pytest.mark.asyncio
+async def test_aclose_waits_for_inflight_sync_bridge_work() -> None:
+    bus = MessageBus()
+    started = threading.Event()
+    release = threading.Event()
+    result: dict[str, str] = {}
+
+    def handler(command: AddUser) -> str:
+        started.set()
+        release.wait()
+        return command.name.upper()
+
+    def run_send() -> None:
+        result["value"] = bus.send_sync(AddUser(name="ada"))
+
+    bus.register_command_handler(AddUser, handler)
+
+    worker = threading.Thread(target=run_send)
+    worker.start()
+    assert started.wait(timeout=1)
+
+    close_task = asyncio.create_task(bus.aclose())
+    await asyncio.sleep(0)
+    assert close_task.done() is False
+
+    release.set()
+
+    await asyncio.wait_for(close_task, timeout=1)
+    worker.join(timeout=1)
+
+    assert result["value"] == "ADA"
     assert bus._loop is None
     assert bus._thread is None
 

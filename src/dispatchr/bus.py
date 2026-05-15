@@ -39,7 +39,9 @@ class MessageBus:
         self._loop_ready = threading.Event()
         self._state = _BusState.OPEN
         self._in_flight_dispatches = 0
-        self._drain_condition = asyncio.Condition()
+        self._state_lock = threading.Lock()
+        self._drained = threading.Event()
+        self._drained.set()
         self._accepted_publish_depth: contextvars.ContextVar[int] = contextvars.ContextVar(
             "dispatchr_bus_accepted_publish_depth",
             default=0,
@@ -264,19 +266,23 @@ class MessageBus:
             self._loop_ready.clear()
 
     async def _drain_and_close_runtime(self) -> None:
-        async with self._drain_condition:
+        with self._state_lock:
             if self._state is _BusState.CLOSED:
                 return
             self._state = _BusState.DRAINING
-            while self._in_flight_dispatches:
-                await self._drain_condition.wait()
+            drained = self._drained.is_set()
+
+        if not drained:
+            await asyncio.to_thread(self._drained.wait)
+
+        with self._state_lock:
             self._state = _BusState.CLOSED
 
         await self._runtime.aclose()
 
     async def _enter_dispatch(self, *, operation: str) -> tuple[contextvars.Token[int], bool]:
         current_depth = self._accepted_publish_depth.get()
-        async with self._drain_condition:
+        with self._state_lock:
             if self._state is _BusState.CLOSED:
                 raise BusDrainingError("message bus is draining")
             if operation == "send" and self._state is not _BusState.OPEN:
@@ -284,16 +290,17 @@ class MessageBus:
             if operation == "publish" and self._state is _BusState.DRAINING and current_depth == 0:
                 raise BusDrainingError("message bus is draining")
             self._in_flight_dispatches += 1
+            self._drained.clear()
         return self._accepted_publish_depth.set(current_depth + 1), True
 
     async def _leave_dispatch(self, token: contextvars.Token[int], counted: bool) -> None:
         self._accepted_publish_depth.reset(token)
         if not counted:
             return
-        async with self._drain_condition:
+        with self._state_lock:
             self._in_flight_dispatches -= 1
-            if self._state is _BusState.DRAINING and self._in_flight_dispatches == 0:
-                self._drain_condition.notify_all()
+            if self._in_flight_dispatches == 0:
+                self._drained.set()
 
     def _run_sync(self, coroutine: Any, timeout: float | None = None) -> Any:
         self._ensure_background_loop()
