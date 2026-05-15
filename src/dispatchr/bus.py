@@ -1,5 +1,4 @@
 import asyncio
-import contextvars
 import threading
 from collections import deque
 from collections.abc import Sequence
@@ -39,11 +38,8 @@ class MessageBus:
         self._loop_ready = threading.Event()
         self._state = _BusState.OPEN
         self._in_flight_dispatches = 0
+        self._admitted_tasks: dict[asyncio.Task[Any], int] = {}
         self._drain_condition = asyncio.Condition()
-        self._admission_depth: contextvars.ContextVar[int] = contextvars.ContextVar(
-            "dispatchr_bus_admission_depth",
-            default=0,
-        )
 
     def register_command_handler(self, message_type: type[Any], handler: Any) -> None:
         self._registry.register_command_handler(message_type, handler)
@@ -55,11 +51,11 @@ class MessageBus:
         self._subscribers.append(subscriber)
 
     async def send(self, command: Any) -> Any:
-        token, counted = await self._enter_root_dispatch()
+        task, counted = await self._enter_root_dispatch()
         try:
             return await self._send_impl(command)
         finally:
-            await self._leave_root_dispatch(token, counted)
+            await self._leave_root_dispatch(task, counted)
 
     async def _send_impl(self, command: Any) -> Any:
         handler = self._registry.get_command_handler(type(command))
@@ -131,11 +127,11 @@ class MessageBus:
         return result
 
     async def publish(self, event: Any) -> None:
-        token, counted = await self._enter_root_dispatch()
+        task, counted = await self._enter_root_dispatch()
         try:
             await self._publish_impl(event)
         finally:
-            await self._leave_root_dispatch(token, counted)
+            await self._leave_root_dispatch(task, counted)
 
     async def _publish_impl(self, event: Any) -> None:
         pending_events = deque([event])
@@ -274,21 +270,27 @@ class MessageBus:
 
         await self._runtime.aclose()
 
-    async def _enter_root_dispatch(self) -> tuple[contextvars.Token[int], bool]:
-        current_depth = self._admission_depth.get()
+    async def _enter_root_dispatch(self) -> tuple[asyncio.Task[Any], bool]:
+        current_task = asyncio.current_task()
+        assert current_task is not None
         async with self._drain_condition:
             if self._state is _BusState.CLOSED:
                 raise BusDrainingError("message bus is draining")
-            if current_depth == 0 and self._state is not _BusState.OPEN:
+            if self._state is _BusState.DRAINING and current_task not in self._admitted_tasks:
                 raise BusDrainingError("message bus is draining")
             self._in_flight_dispatches += 1
-        return self._admission_depth.set(current_depth + 1), True
+            self._admitted_tasks[current_task] = self._admitted_tasks.get(current_task, 0) + 1
+        return current_task, True
 
-    async def _leave_root_dispatch(self, token: contextvars.Token[int], counted: bool) -> None:
-        self._admission_depth.reset(token)
+    async def _leave_root_dispatch(self, task: asyncio.Task[Any], counted: bool) -> None:
         if not counted:
             return
         async with self._drain_condition:
+            remaining_depth = self._admitted_tasks[task] - 1
+            if remaining_depth:
+                self._admitted_tasks[task] = remaining_depth
+            else:
+                del self._admitted_tasks[task]
             self._in_flight_dispatches -= 1
             if self._state is _BusState.DRAINING and self._in_flight_dispatches == 0:
                 self._drain_condition.notify_all()
