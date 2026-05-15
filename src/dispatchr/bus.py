@@ -4,14 +4,21 @@ from collections import deque
 from collections.abc import Sequence
 from concurrent.futures import Future
 from datetime import datetime
+from enum import Enum, auto
 from time import perf_counter
 from typing import Any
 
-from dispatchr.exceptions import EventPublicationError
+from dispatchr.exceptions import BusDrainingError, EventPublicationError
 from dispatchr.middleware import Middleware, compose_middleware
 from dispatchr.observability import DispatchFinished, DispatchStarted, Subscriber, new_dispatch_id
 from dispatchr.registry import HandlerRegistry
 from dispatchr.runtime import EventConcurrency, MessageRuntime
+
+
+class _BusState(Enum):
+    OPEN = auto()
+    DRAINING = auto()
+    CLOSED = auto()
 
 
 class MessageBus:
@@ -29,6 +36,9 @@ class MessageBus:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._loop_ready = threading.Event()
+        self._state = _BusState.OPEN
+        self._in_flight_root_dispatches = 0
+        self._drain_condition = asyncio.Condition()
 
     def register_command_handler(self, message_type: type[Any], handler: Any) -> None:
         self._registry.register_command_handler(message_type, handler)
@@ -40,6 +50,13 @@ class MessageBus:
         self._subscribers.append(subscriber)
 
     async def send(self, command: Any) -> Any:
+        await self._enter_root_dispatch()
+        try:
+            return await self._send_impl(command)
+        finally:
+            await self._leave_root_dispatch()
+
+    async def _send_impl(self, command: Any) -> Any:
         handler = self._registry.get_command_handler(type(command))
         dispatch_id = new_dispatch_id()
         started = perf_counter()
@@ -65,7 +82,7 @@ class MessageBus:
             failures: list[Exception] = []
             for emitted_event in outcome.emitted_events:
                 try:
-                    await self.publish(emitted_event)
+                    await self._publish_impl(emitted_event)
                 except EventPublicationError as exc:
                     failures.extend(exc.failures)
                 except Exception as exc:
@@ -109,6 +126,13 @@ class MessageBus:
         return result
 
     async def publish(self, event: Any) -> None:
+        await self._enter_root_dispatch()
+        try:
+            await self._publish_impl(event)
+        finally:
+            await self._leave_root_dispatch()
+
+    async def _publish_impl(self, event: Any) -> None:
         pending_events = deque([event])
         failures: list[Exception] = []
 
@@ -150,7 +174,7 @@ class MessageBus:
 
             async def on_outcome(outcome: Any) -> None:
                 for emitted_event in outcome.emitted_events:
-                    follow_up_tasks.append(asyncio.create_task(self.publish(emitted_event)))
+                    follow_up_tasks.append(asyncio.create_task(self._publish_impl(emitted_event)))
 
             dispatch_outcome = await self._runtime.dispatch_event(
                 handlers,
@@ -223,6 +247,14 @@ class MessageBus:
         self._loop_ready.clear()
 
     async def aclose(self) -> None:
+        async with self._drain_condition:
+            if self._state is _BusState.CLOSED:
+                return
+            self._state = _BusState.DRAINING
+            while self._in_flight_root_dispatches:
+                await self._drain_condition.wait()
+            self._state = _BusState.CLOSED
+
         await self._runtime.aclose()
         if self._loop is not None:
             self._loop.call_soon_threadsafe(self._loop.stop)
@@ -231,6 +263,18 @@ class MessageBus:
             self._loop = None
             self._thread = None
             self._loop_ready.clear()
+
+    async def _enter_root_dispatch(self) -> None:
+        async with self._drain_condition:
+            if self._state is not _BusState.OPEN:
+                raise BusDrainingError("message bus is draining")
+            self._in_flight_root_dispatches += 1
+
+    async def _leave_root_dispatch(self) -> None:
+        async with self._drain_condition:
+            self._in_flight_root_dispatches -= 1
+            if self._state is _BusState.DRAINING and self._in_flight_root_dispatches == 0:
+                self._drain_condition.notify_all()
 
     def _run_sync(self, coroutine: Any, timeout: float | None = None) -> Any:
         self._ensure_background_loop()

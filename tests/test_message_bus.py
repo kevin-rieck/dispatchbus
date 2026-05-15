@@ -8,7 +8,7 @@ from typing import Any, cast
 import pytest
 
 from dispatchr.bus import MessageBus
-from dispatchr.exceptions import EventPublicationError, HandlerRegistrationError
+from dispatchr.exceptions import BusDrainingError, EventPublicationError, HandlerRegistrationError
 from dispatchr.observability import (
     DispatchFinished,
     DispatchStarted,
@@ -1009,3 +1009,58 @@ def test_public_api_exports_bus_draining_error() -> None:
     from dispatchr.exceptions import BusDrainingError
 
     assert issubclass(BusDrainingError, Exception)
+
+
+@pytest.mark.asyncio
+async def test_send_rejects_new_work_once_aclose_starts() -> None:
+    bus = MessageBus()
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def handler(command: AddUser) -> str:
+        started.set()
+        await release.wait()
+        return command.name.upper()
+
+    bus.register_command_handler(AddUser, handler)
+
+    first_send = asyncio.create_task(bus.send(AddUser(name="ada")))
+    await started.wait()
+
+    close_task = asyncio.create_task(bus.aclose())
+    await asyncio.sleep(0)
+
+    with pytest.raises(BusDrainingError, match="message bus is draining"):
+        await bus.send(AddUser(name="grace"))
+
+    release.set()
+
+    assert await first_send == "ADA"
+    await close_task
+
+
+@pytest.mark.asyncio
+async def test_publish_rejects_new_work_once_aclose_starts() -> None:
+    bus = MessageBus()
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def handler(event: UserAdded) -> None:
+        started.set()
+        await release.wait()
+
+    bus.register_event_handler(UserAdded, handler)
+
+    first_publish = asyncio.create_task(bus.publish(UserAdded(user_id=1)))
+    await started.wait()
+
+    close_task = asyncio.create_task(bus.aclose())
+    await asyncio.sleep(0)
+
+    with pytest.raises(BusDrainingError, match="message bus is draining"):
+        await bus.publish(UserAdded(user_id=2))
+
+    release.set()
+
+    await first_publish
+    await close_task
