@@ -1193,6 +1193,8 @@ async def test_aclose_allows_follow_up_events_from_accepted_work() -> None:
     bus = MessageBus(event_concurrency="sequential")
     started = asyncio.Event()
     release = asyncio.Event()
+    event_started = asyncio.Event()
+    event_release = asyncio.Event()
     seen: list[str] = []
 
     async def command_handler(command: AddUser, context) -> str:
@@ -1203,6 +1205,8 @@ async def test_aclose_allows_follow_up_events_from_accepted_work() -> None:
         return command.name
 
     async def event_handler(event: UserAdded) -> None:
+        event_started.set()
+        await event_release.wait()
         seen.append(f"event:{event.user_id}")
 
     bus.register_command_handler(AddUser, command_handler)
@@ -1215,6 +1219,12 @@ async def test_aclose_allows_follow_up_events_from_accepted_work() -> None:
     await asyncio.sleep(0)
 
     release.set()
+
+    await event_started.wait()
+    await asyncio.sleep(0)
+    assert close_task.done() is False
+
+    event_release.set()
 
     assert await send_task == "ada"
     await close_task
