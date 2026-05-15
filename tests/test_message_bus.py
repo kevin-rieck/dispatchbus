@@ -1278,6 +1278,70 @@ def test_close_rejects_new_sync_work() -> None:
         bus.send_sync(AddUser(name="grace"))
 
 
+def test_send_sync_rejects_new_work_after_close() -> None:
+    bus = MessageBus()
+
+    def handler(command: AddUser) -> str:
+        return command.name.upper()
+
+    bus.register_command_handler(AddUser, handler)
+
+    assert bus.send_sync(AddUser(name="ada")) == "ADA"
+
+    bus.close()
+
+    with pytest.raises(BusDrainingError, match="message bus is draining"):
+        bus.send_sync(AddUser(name="grace"))
+
+
+def test_publish_sync_rejects_new_work_after_close() -> None:
+    bus = MessageBus()
+    seen: list[int] = []
+
+    def handler(event: UserAdded) -> None:
+        seen.append(event.user_id)
+
+    bus.register_event_handler(UserAdded, handler)
+
+    bus.publish_sync(UserAdded(user_id=1))
+    assert seen == [1]
+
+    bus.close()
+
+    with pytest.raises(BusDrainingError, match="message bus is draining"):
+        bus.publish_sync(UserAdded(user_id=2))
+
+
+@pytest.mark.asyncio
+async def test_repeated_aclose_is_harmless() -> None:
+    bus = MessageBus()
+
+    def handler(command: AddUser) -> str:
+        return command.name
+
+    bus.register_command_handler(AddUser, handler)
+    assert bus.send_sync(AddUser(name="ada")) == "ada"
+
+    await bus.aclose()
+    await bus.aclose()
+
+    assert bus._loop is None
+    assert bus._thread is None
+
+
+def test_repeated_close_is_harmless() -> None:
+    bus = MessageBus()
+
+    def handler(command: AddUser) -> str:
+        return command.name
+
+    bus.register_command_handler(AddUser, handler)
+    assert bus.send_sync(AddUser(name="ada")) == "ada"
+
+    bus.close()
+    bus.close()
+
+
 @pytest.mark.asyncio
 async def test_aclose_waits_for_accepted_send_to_finish() -> None:
     bus = MessageBus()
