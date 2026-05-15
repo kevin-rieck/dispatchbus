@@ -1098,11 +1098,13 @@ async def test_accepted_work_can_call_public_publish_during_drain() -> None:
 
 
 @pytest.mark.asyncio
-async def test_detached_tasks_are_rejected_while_bus_is_draining() -> None:
+async def test_child_task_publish_from_accepted_work_is_allowed_during_drain() -> None:
     bus = MessageBus()
     started = asyncio.Event()
     release = asyncio.Event()
     detached_started = asyncio.Event()
+    event_started = asyncio.Event()
+    event_release = asyncio.Event()
     detached_publish: asyncio.Task[None] | None = None
     seen: list[int] = []
 
@@ -1121,6 +1123,8 @@ async def test_detached_tasks_are_rejected_while_bus_is_draining() -> None:
         return command.name.upper()
 
     async def event_handler(event: UserAdded) -> None:
+        event_started.set()
+        await event_release.wait()
         seen.append(event.user_id)
 
     bus.register_command_handler(AddUser, command_handler)
@@ -1135,12 +1139,81 @@ async def test_detached_tasks_are_rejected_while_bus_is_draining() -> None:
 
     release.set()
 
-    assert await send_task == "ADA"
+    await detached_started.wait()
+    await asyncio.sleep(0)
     assert detached_publish is not None
-    with pytest.raises(BusDrainingError, match="message bus is draining"):
-        await detached_publish
+    await event_started.wait()
+    await asyncio.sleep(0)
+    assert close_task.done() is False
+
+    event_release.set()
+
+    assert await send_task == "ADA"
+    await detached_publish
     await close_task
-    assert seen == []
+    assert seen == [3]
+
+
+@pytest.mark.asyncio
+async def test_nested_send_from_accepted_work_is_rejected_during_drain() -> None:
+    bus = MessageBus()
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    @dataclass(frozen=True)
+    class AddAdmin:
+        name: str
+
+    async def handler(command: AddUser) -> str:
+        started.set()
+        await release.wait()
+        with pytest.raises(BusDrainingError, match="message bus is draining"):
+            await bus.send(AddAdmin(name="grace"))
+        return command.name.upper()
+
+    bus.register_command_handler(AddUser, handler)
+
+    send_task = asyncio.create_task(bus.send(AddUser(name="ada")))
+    await started.wait()
+
+    close_task = asyncio.create_task(bus.aclose())
+    await asyncio.sleep(0)
+
+    release.set()
+
+    assert await send_task == "ADA"
+    await close_task
+
+
+@pytest.mark.asyncio
+async def test_child_task_send_from_accepted_work_is_rejected_during_drain() -> None:
+    bus = MessageBus()
+    started = asyncio.Event()
+    release = asyncio.Event()
+    child_send: asyncio.Task[str] | None = None
+
+    async def handler(command: AddUser) -> str:
+        nonlocal child_send
+        started.set()
+        await release.wait()
+        child_send = asyncio.create_task(bus.send(AddUser(name="grace")))
+        return command.name.upper()
+
+    bus.register_command_handler(AddUser, handler)
+
+    send_task = asyncio.create_task(bus.send(AddUser(name="ada")))
+    await started.wait()
+
+    close_task = asyncio.create_task(bus.aclose())
+    await asyncio.sleep(0)
+
+    release.set()
+
+    assert await send_task == "ADA"
+    assert child_send is not None
+    with pytest.raises(BusDrainingError, match="message bus is draining"):
+        await child_send
+    await close_task
 
 
 @pytest.mark.asyncio
