@@ -1157,3 +1157,65 @@ def test_close_rejects_new_sync_work() -> None:
 
     with pytest.raises(BusDrainingError, match="message bus is draining"):
         bus.send_sync(AddUser(name="grace"))
+
+
+@pytest.mark.asyncio
+async def test_aclose_waits_for_accepted_send_to_finish() -> None:
+    bus = MessageBus()
+    started = asyncio.Event()
+    release = asyncio.Event()
+    finished: list[str] = []
+
+    async def handler(command: AddUser) -> str:
+        started.set()
+        await release.wait()
+        finished.append(command.name)
+        return command.name.upper()
+
+    bus.register_command_handler(AddUser, handler)
+
+    send_task = asyncio.create_task(bus.send(AddUser(name="ada")))
+    await started.wait()
+
+    close_task = asyncio.create_task(bus.aclose())
+    await asyncio.sleep(0)
+    assert close_task.done() is False
+
+    release.set()
+
+    assert await send_task == "ADA"
+    await close_task
+    assert finished == ["ada"]
+
+
+@pytest.mark.asyncio
+async def test_aclose_allows_follow_up_events_from_accepted_work() -> None:
+    bus = MessageBus(event_concurrency="sequential")
+    started = asyncio.Event()
+    release = asyncio.Event()
+    seen: list[str] = []
+
+    async def command_handler(command: AddUser, context) -> str:
+        started.set()
+        await release.wait()
+        context.emit(UserAdded(user_id=len(command.name)))
+        seen.append("command:done")
+        return command.name
+
+    async def event_handler(event: UserAdded) -> None:
+        seen.append(f"event:{event.user_id}")
+
+    bus.register_command_handler(AddUser, command_handler)
+    bus.register_event_handler(UserAdded, event_handler)
+
+    send_task = asyncio.create_task(bus.send(AddUser(name="ada")))
+    await started.wait()
+
+    close_task = asyncio.create_task(bus.aclose())
+    await asyncio.sleep(0)
+
+    release.set()
+
+    assert await send_task == "ada"
+    await close_task
+    assert seen == ["command:done", "event:3"]
