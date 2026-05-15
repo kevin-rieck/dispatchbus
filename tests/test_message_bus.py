@@ -1006,6 +1006,6 @@ async def test_aclose_stops_background_loop_created_by_sync_bridge() -> None:
 
 
 def test_public_api_exports_bus_draining_error() -> None:
-    from dispatchr.exceptions import BusDrainingError
+    from dispatchr import BusDrainingError, DispatchrError
 
-    assert issubclass(BusDrainingError, Exception)
+    assert issubclass(BusDrainingError, DispatchrError)
