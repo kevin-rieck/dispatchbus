@@ -33,7 +33,11 @@ def test_register_and_resolve_command_handler() -> None:
 
     registry.register_command_handler(CreateUser, async_create_user)
 
-    assert registry.get_command_handler(CreateUser) is async_create_user
+    registered_handler = registry.get_command_handler(CreateUser)
+
+    assert registered_handler.handler is async_create_user
+    assert registered_handler.is_async is True
+    assert registered_handler.context_style == "none"
 
 
 def test_duplicate_command_handler_raises() -> None:
@@ -59,7 +63,23 @@ def test_register_and_resolve_event_handlers() -> None:
 
     handlers = registry.get_event_handlers(UserCreated)
 
-    assert handlers == [on_user_created, sync_create_user]
+    assert [handler.handler for handler in handlers] == [on_user_created, sync_create_user]
+    assert [handler.is_async for handler in handlers] == [True, False]
+    assert [handler.context_style for handler in handlers] == ["none", "none"]
+
+
+def test_registers_keyword_only_context_metadata() -> None:
+    registry = HandlerRegistry()
+
+    async def handler(event: UserCreated, *, context) -> None:
+        return None
+
+    registry.register_event_handler(UserCreated, handler)
+
+    registered_handler = registry.get_event_handlers(UserCreated)[0]
+
+    assert registered_handler.handler is handler
+    assert registered_handler.context_style == "keyword"
 
 
 def test_missing_event_handlers_returns_empty_list() -> None:

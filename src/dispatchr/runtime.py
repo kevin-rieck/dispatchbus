@@ -17,9 +17,16 @@ from dispatchr.observability import (
     Subscriber,
     handler_name,
 )
+from dispatchr.registry import RegisteredHandler
 
 Handler = Callable[..., Any]
 EventConcurrency = Literal["concurrent", "sequential"]
+
+
+def _is_async_callable(value: Callable[..., Any]) -> bool:
+    return inspect.iscoroutinefunction(value) or (
+        callable(value) and inspect.iscoroutinefunction(value.__call__)
+    )
 
 
 @dataclass(frozen=True)
@@ -32,47 +39,6 @@ class HandlerOutcome:
 class EventDispatchOutcome:
     handler_outcomes: tuple[HandlerOutcome, ...]
     failures: tuple[Exception, ...]
-
-
-def _is_async_callable(value: Callable[..., Any]) -> bool:
-    return inspect.iscoroutinefunction(value) or (
-        callable(value) and inspect.iscoroutinefunction(value.__call__)
-    )
-
-
-def _callable_signature(value: Callable[..., Any]) -> inspect.Signature:
-    return inspect.signature(value)
-
-
-def _context_parameter(value: Callable[..., Any]) -> inspect.Parameter | None:
-    parameters = list(_callable_signature(value).parameters.values())
-    positional = [
-        parameter
-        for parameter in parameters
-        if parameter.kind
-        in (
-            inspect.Parameter.POSITIONAL_ONLY,
-            inspect.Parameter.POSITIONAL_OR_KEYWORD,
-        )
-    ]
-    if (
-        len(positional) >= 2
-        and positional[1].name == "context"
-        and positional[1].default is inspect.Parameter.empty
-    ):
-        return positional[1]
-    for parameter in parameters:
-        if (
-            parameter.kind is inspect.Parameter.KEYWORD_ONLY
-            and parameter.name == "context"
-            and parameter.default is inspect.Parameter.empty
-        ):
-            return parameter
-    return None
-
-
-def _accepts_event_context(value: Callable[..., Any]) -> bool:
-    return _context_parameter(value) is not None
 
 
 class MessageRuntime:
@@ -91,7 +57,7 @@ class MessageRuntime:
 
     async def dispatch_command(
         self,
-        handler: Handler,
+        handler: RegisteredHandler,
         message: Any,
         *,
         dispatch_id: str,
@@ -107,7 +73,7 @@ class MessageRuntime:
 
     async def dispatch_event(
         self,
-        handlers: list[Handler],
+        handlers: list[RegisteredHandler],
         message: Any,
         *,
         dispatch_id: str,
@@ -178,7 +144,7 @@ class MessageRuntime:
 
     async def _call_handler_with_events(
         self,
-        handler: Handler,
+        registered_handler: RegisteredHandler,
         message: Any,
         *,
         operation: Operation,
@@ -186,6 +152,7 @@ class MessageRuntime:
         subscribers: Sequence[Subscriber],
     ) -> HandlerOutcome:
         started = perf_counter()
+        handler = registered_handler.handler
         name = handler_name(handler)
         context = EventContext()
         await self.notify_subscribers(
@@ -201,7 +168,7 @@ class MessageRuntime:
             ),
         )
         try:
-            result = await self._call_handler(handler, message, context)
+            result = await self._call_handler(registered_handler, message, context)
         except Exception as exc:
             await self.notify_subscribers(
                 subscribers,
@@ -234,21 +201,23 @@ class MessageRuntime:
         )
         return HandlerOutcome(result=result, emitted_events=tuple(context.events))
 
-    async def _call_handler(self, handler: Handler, message: Any, context: EventContext) -> Any:
-        context_parameter = _context_parameter(handler)
-        if _is_async_callable(handler):
-            if context_parameter is not None:
-                if context_parameter.kind is inspect.Parameter.KEYWORD_ONLY:
-                    return await handler(message, context=context)
+    async def _call_handler(
+        self, registered_handler: RegisteredHandler, message: Any, context: EventContext
+    ) -> Any:
+        handler = registered_handler.handler
+        if registered_handler.is_async:
+            if registered_handler.context_style == "keyword":
+                return await handler(message, context=context)
+            if registered_handler.context_style == "positional":
                 return await handler(message, context)
             return await handler(message)
         loop = asyncio.get_running_loop()
-        if context_parameter is not None:
-            if context_parameter.kind is inspect.Parameter.KEYWORD_ONLY:
-                return await loop.run_in_executor(
-                    self._executor,
-                    lambda: handler(message, context=context),
-                )
+        if registered_handler.context_style == "keyword":
+            return await loop.run_in_executor(
+                self._executor,
+                lambda: handler(message, context=context),
+            )
+        if registered_handler.context_style == "positional":
             return await loop.run_in_executor(self._executor, handler, message, context)
         return await loop.run_in_executor(self._executor, handler, message)
 
