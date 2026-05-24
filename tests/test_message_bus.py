@@ -875,6 +875,12 @@ def test_message_bus_uses_sync_bridge() -> None:
     assert bus._sync_bridge is not None
 
 
+def test_message_bus_uses_event_publisher() -> None:
+    bus = MessageBus()
+
+    assert bus._event_publisher is not None
+
+
 @pytest.mark.asyncio
 async def test_publish_can_run_handlers_sequentially() -> None:
     bus = MessageBus(event_concurrency="sequential")

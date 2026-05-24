@@ -1,12 +1,10 @@
 import asyncio
-import threading
-from collections import deque
 from collections.abc import Sequence
-from concurrent.futures import Future
 from datetime import datetime
 from time import perf_counter
 from typing import Any
 
+from dispatchr.event_publisher import EventPublisher
 from dispatchr.exceptions import BusUsageError, EventPublicationError
 from dispatchr.lifecycle import BusLifecycle
 from dispatchr.middleware import Middleware, compose_middleware
@@ -30,6 +28,12 @@ class MessageBus:
         self._subscribers = list(subscribers or [])
         self._lifecycle = BusLifecycle()
         self._sync_bridge = SyncBridge()
+        self._event_publisher = EventPublisher(
+            registry=self._registry,
+            runtime=self._runtime,
+            middleware=self._middleware,
+            subscribers=self._subscribers,
+        )
 
     def register_command_handler(self, message_type: type[Any], handler: Any) -> None:
         self._registry.register_command_handler(message_type, handler)
@@ -124,100 +128,7 @@ class MessageBus:
             await self._lifecycle.leave_dispatch(token)
 
     async def _publish_impl(self, event: Any) -> None:
-        pending_events = deque([event])
-        failures: list[Exception] = []
-
-        while pending_events:
-            current_event = pending_events.popleft()
-            try:
-                emitted_events, event_failures = await self._publish_one_event(current_event)
-            except EventPublicationError as exc:
-                failures.extend(exc.failures)
-            except Exception as exc:
-                failures.append(exc)
-            else:
-                pending_events.extend(emitted_events)
-                failures.extend(event_failures)
-
-        if failures:
-            raise EventPublicationError(failures)
-
-    async def _publish_one_event(self, event: Any) -> tuple[list[Any], list[Exception]]:
-        handlers = self._registry.get_event_handlers(type(event))
-        dispatch_id = new_dispatch_id()
-        started = perf_counter()
-        await self._runtime.notify_subscribers(
-            self._subscribers,
-            DispatchStarted(
-                message=event,
-                message_type=type(event),
-                operation="publish",
-                timestamp=datetime.now(),
-                dispatch_id=dispatch_id,
-                handler_count=len(handlers),
-            ),
-        )
-
-        failures: list[Exception] = []
-
-        async def final_handler(message: Any) -> None:
-            follow_up_tasks: list[asyncio.Task[None]] = []
-
-            async def on_outcome(outcome: Any) -> None:
-                for emitted_event in outcome.emitted_events:
-                    follow_up_tasks.append(asyncio.create_task(self._publish_impl(emitted_event)))
-
-            dispatch_outcome = await self._runtime.dispatch_event(
-                handlers,
-                message,
-                dispatch_id=dispatch_id,
-                subscribers=self._subscribers,
-                on_outcome=on_outcome,
-            )
-            failures.extend(dispatch_outcome.failures)
-            if follow_up_tasks:
-                nested_results = await asyncio.gather(*follow_up_tasks, return_exceptions=True)
-                for result in nested_results:
-                    if isinstance(result, EventPublicationError):
-                        failures.extend(result.failures)
-                    elif isinstance(result, Exception):
-                        failures.append(result)
-            if failures:
-                raise EventPublicationError(failures)
-
-        pipeline = compose_middleware(self._middleware, final_handler)
-        try:
-            await pipeline(event)
-        except Exception:
-            await self._runtime.notify_subscribers(
-                self._subscribers,
-                DispatchFinished(
-                    message=event,
-                    message_type=type(event),
-                    operation="publish",
-                    timestamp=datetime.now(),
-                    dispatch_id=dispatch_id,
-                    handler_count=len(handlers),
-                    duration_ms=(perf_counter() - started) * 1000,
-                    success=False,
-                ),
-            )
-            raise
-
-        await self._runtime.notify_subscribers(
-            self._subscribers,
-            DispatchFinished(
-                message=event,
-                message_type=type(event),
-                operation="publish",
-                timestamp=datetime.now(),
-                dispatch_id=dispatch_id,
-                handler_count=len(handlers),
-                duration_ms=(perf_counter() - started) * 1000,
-                success=True,
-            ),
-        )
-        return [], []
+        await self._event_publisher.publish(event)
 
     def send_sync(self, command: Any, timeout: float | None = None) -> Any:
         if self._in_running_loop_thread():
