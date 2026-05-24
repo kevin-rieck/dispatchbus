@@ -89,27 +89,60 @@ class MessageRuntime:
         on_outcome: Callable[[HandlerOutcome], Awaitable[None]] | None = None,
     ) -> EventDispatchOutcome:
         if self._event_concurrency == "sequential":
-            failures: list[Exception] = []
-            outcomes: list[HandlerOutcome] = []
-            for handler in handlers:
-                try:
-                    outcome = await self._call_handler_with_events(
-                        handler,
-                        message,
-                        operation="publish",
-                        dispatch_id=dispatch_id,
-                        subscribers=subscribers,
-                    )
-                    outcomes.append(outcome)
-                    if on_outcome is not None:
-                        await on_outcome(outcome)
-                except Exception as exc:
-                    failures.append(exc)
-            return EventDispatchOutcome(
-                handler_outcomes=tuple(outcomes),
-                failures=tuple(failures),
+            return await self._dispatch_event_sequential(
+                handlers,
+                message,
+                dispatch_id=dispatch_id,
+                subscribers=subscribers,
+                on_outcome=on_outcome,
             )
+        return await self._dispatch_event_concurrent(
+            handlers,
+            message,
+            dispatch_id=dispatch_id,
+            subscribers=subscribers,
+            on_outcome=on_outcome,
+        )
 
+    async def _dispatch_event_sequential(
+        self,
+        handlers: list[RegisteredHandler],
+        message: Any,
+        *,
+        dispatch_id: str,
+        subscribers: Sequence[Subscriber],
+        on_outcome: Callable[[HandlerOutcome], Awaitable[None]] | None,
+    ) -> EventDispatchOutcome:
+        failures: list[Exception] = []
+        outcomes: list[HandlerOutcome] = []
+        for handler in handlers:
+            try:
+                outcome = await self._call_handler_with_events(
+                    handler,
+                    message,
+                    operation="publish",
+                    dispatch_id=dispatch_id,
+                    subscribers=subscribers,
+                )
+                outcomes.append(outcome)
+                if on_outcome is not None:
+                    await on_outcome(outcome)
+            except Exception as exc:
+                failures.append(exc)
+        return EventDispatchOutcome(
+            handler_outcomes=tuple(outcomes),
+            failures=tuple(failures),
+        )
+
+    async def _dispatch_event_concurrent(
+        self,
+        handlers: list[RegisteredHandler],
+        message: Any,
+        *,
+        dispatch_id: str,
+        subscribers: Sequence[Subscriber],
+        on_outcome: Callable[[HandlerOutcome], Awaitable[None]] | None,
+    ) -> EventDispatchOutcome:
         tasks = [
             asyncio.create_task(
                 self._call_handler_with_events(
@@ -125,20 +158,20 @@ class MessageRuntime:
         for task in tasks:
             self._in_flight.add(task)
             task.add_done_callback(self._in_flight.discard)
-        concurrent_failures: list[Exception] = []
-        concurrent_outcomes: list[HandlerOutcome] = []
+        failures: list[Exception] = []
+        outcomes: list[HandlerOutcome] = []
         for task in asyncio.as_completed(tasks):
             try:
-                result = await task
+                outcome = await task
             except Exception as exc:
-                concurrent_failures.append(exc)
+                failures.append(exc)
             else:
-                concurrent_outcomes.append(result)
+                outcomes.append(outcome)
                 if on_outcome is not None:
-                    await on_outcome(result)
+                    await on_outcome(outcome)
         return EventDispatchOutcome(
-            handler_outcomes=tuple(concurrent_outcomes),
-            failures=tuple(concurrent_failures),
+            handler_outcomes=tuple(outcomes),
+            failures=tuple(failures),
         )
 
     async def notify_subscribers(self, subscribers: Sequence[Subscriber], event: object) -> None:

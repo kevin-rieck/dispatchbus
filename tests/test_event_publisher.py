@@ -5,7 +5,7 @@ import pytest
 from dispatchr.event_publisher import EventPublisher
 from dispatchr.exceptions import EventPublicationError
 from dispatchr.registry import HandlerRegistry
-from dispatchr.runtime import MessageRuntime
+from dispatchr.runtime import EventDispatchOutcome, MessageRuntime
 
 
 @dataclass(frozen=True)
@@ -32,3 +32,10 @@ async def test_event_publisher_aggregates_follow_up_failures() -> None:
 
     with pytest.raises(EventPublicationError, match=r"1 event handler\(s\) failed"):
         await publisher.publish(UserAdded(user_id=1))
+
+
+def test_event_dispatch_outcome_exposes_handler_outcomes_and_failures() -> None:
+    outcome = EventDispatchOutcome(handler_outcomes=(), failures=())
+
+    assert outcome.handler_outcomes == ()
+    assert outcome.failures == ()
