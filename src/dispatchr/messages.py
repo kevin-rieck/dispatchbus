@@ -61,7 +61,7 @@ class MessageBase(ABC):
     @property
     def is_stamped(self) -> bool:
         try:
-            self.metadata
+            _ = self.metadata
         except InvalidMessageError:
             return False
         return True

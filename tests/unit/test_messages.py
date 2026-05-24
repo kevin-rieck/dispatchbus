@@ -87,4 +87,4 @@ def test_with_metadata_returns_new_immutable_instance() -> None:
 
 def test_unstamped_message_metadata_property_raises() -> None:
     with pytest.raises(InvalidMessageError, match="unstamped"):
-        CreateUser(name="ada").metadata
+        _ = CreateUser(name="ada").metadata

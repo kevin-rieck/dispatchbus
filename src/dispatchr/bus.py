@@ -115,7 +115,7 @@ class MessageBus:
                 f"send() requires a CommandBase instance, got {type(message).__name__}"
             )
         try:
-            message.metadata
+            _ = message.metadata
         except Exception as exc:
             raise BusUsageError("send() requires a stamped root command") from exc
 
@@ -125,7 +125,7 @@ class MessageBus:
                 f"publish() requires an EventBase instance, got {type(message).__name__}"
             )
         try:
-            message.metadata
+            _ = message.metadata
         except Exception as exc:
             raise BusUsageError("publish() requires a stamped root event") from exc
 

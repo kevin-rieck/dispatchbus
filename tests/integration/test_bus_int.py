@@ -24,13 +24,45 @@ from dispatchr.sync_bridge import SyncBridge
 
 
 @dataclass(frozen=True)
-class AddUser:
+class AddUser(CommandBase):
+    message_name = "user.add"
+
     name: str
+    _metadata: MessageMetadata | None = None
+
+    @property
+    def metadata(self) -> MessageMetadata:
+        if self._metadata is None:
+            raise InvalidMessageError("AddUser is unstamped")
+        return self._metadata
+
+    def with_metadata(self, metadata: MessageMetadata) -> "AddUser":
+        return AddUser(name=self.name, _metadata=metadata)
 
 
 @dataclass(frozen=True)
-class UserAdded:
+class UserAdded(EventBase):
+    message_name = "user.added"
+
     user_id: int
+    _metadata: MessageMetadata | None = None
+
+    @property
+    def metadata(self) -> MessageMetadata:
+        if self._metadata is None:
+            raise InvalidMessageError("UserAdded is unstamped")
+        return self._metadata
+
+    def with_metadata(self, metadata: MessageMetadata) -> "UserAdded":
+        return UserAdded(user_id=self.user_id, _metadata=metadata)
+
+
+def root_add_user(name: str) -> AddUser:
+    return AddUser(name=name, _metadata=new_root_metadata())
+
+
+def root_user_added(user_id: int) -> UserAdded:
+    return UserAdded(user_id=user_id, _metadata=new_root_metadata())
 
 
 @pytest.mark.asyncio
@@ -124,7 +156,7 @@ async def test_send_uses_async_command_handler() -> None:
 
     bus.register_command_handler(AddUser, handler)
 
-    result = await bus.send(AddUser(name="ada"))
+    result = await bus.send(root_add_user(name="ada"))
 
     assert result == "ADA"
 
@@ -138,7 +170,7 @@ async def test_send_uses_sync_command_handler() -> None:
 
     bus.register_command_handler(AddUser, handler)
 
-    result = await bus.send(AddUser(name="ADA"))
+    result = await bus.send(root_add_user(name="ADA"))
 
     assert result == "ada"
 
@@ -158,7 +190,7 @@ async def test_command_handler_can_emit_one_follow_up_event() -> None:
     bus.register_command_handler(AddUser, command_handler)
     bus.register_event_handler(UserAdded, event_handler)
 
-    result = await bus.send(AddUser(name="ada"))
+    result = await bus.send(root_add_user(name="ada"))
 
     assert result == "ADA"
     assert seen == ["event:3"]
@@ -180,7 +212,7 @@ async def test_command_handler_can_emit_multiple_follow_up_events_in_order() -> 
     bus.register_command_handler(AddUser, command_handler)
     bus.register_event_handler(UserAdded, event_handler)
 
-    result = await bus.send(AddUser(name="ada"))
+    result = await bus.send(root_add_user(name="ada"))
 
     assert result == "ada"
     assert seen == [1, 2]
@@ -202,7 +234,7 @@ async def test_event_handler_can_emit_follow_up_events() -> None:
     bus.register_event_handler(UserAdded, first_handler)
     bus.register_event_handler(UserAdded, second_handler)
 
-    await bus.publish(UserAdded(user_id=1))
+    await bus.publish(root_user_added(user_id=1))
 
     assert seen == [
         "first:1",
@@ -221,7 +253,7 @@ async def test_existing_one_argument_handlers_still_work() -> None:
 
     bus.register_command_handler(AddUser, handler)
 
-    assert await bus.send(AddUser(name="ada")) == "ADA"
+    assert await bus.send(root_add_user(name="ada")) == "ADA"
 
 
 @pytest.mark.asyncio
@@ -235,7 +267,7 @@ async def test_handler_with_optional_second_positional_arg_is_not_treated_as_con
 
     bus.register_command_handler(AddUser, handler)
 
-    assert await bus.send(AddUser(name="ada")) == "Xada"
+    assert await bus.send(root_add_user(name="ada")) == "Xada"
 
 
 @pytest.mark.asyncio
@@ -247,7 +279,7 @@ async def test_handler_with_defaulted_context_parameter_is_not_treated_as_contex
 
     bus.register_command_handler(AddUser, handler)
 
-    assert await bus.send(AddUser(name="ada")) == "Xada"
+    assert await bus.send(root_add_user(name="ada")) == "Xada"
 
 
 @pytest.mark.asyncio
@@ -265,7 +297,7 @@ async def test_partial_of_context_aware_handler_receives_context() -> None:
     bus.register_command_handler(AddUser, partial(handler))
     bus.register_event_handler(UserAdded, event_handler)
 
-    assert await bus.send(AddUser(name="ada")) == "ADA"
+    assert await bus.send(root_add_user(name="ada")) == "ADA"
     assert seen == [3]
 
 
@@ -281,7 +313,7 @@ async def test_handler_with_keyword_only_context_receives_event_context() -> Non
 
     bus.register_event_handler(UserAdded, handler)
 
-    await bus.publish(UserAdded(user_id=1))
+    await bus.publish(root_user_added(user_id=1))
 
     assert seen == [1, 2]
 
@@ -300,7 +332,7 @@ async def test_publish_fans_out_to_all_handlers() -> None:
     bus.register_event_handler(UserAdded, async_handler)
     bus.register_event_handler(UserAdded, sync_handler)
 
-    await bus.publish(UserAdded(user_id=7))
+    await bus.publish(root_user_added(user_id=7))
 
     assert sorted(seen) == ["async:7", "sync:7"]
 
@@ -321,7 +353,7 @@ async def test_emitted_events_are_discarded_when_emitting_handler_fails() -> Non
     bus.register_event_handler(UserAdded, event_handler)
 
     with pytest.raises(ValueError, match="boom"):
-        await bus.send(AddUser(name="ada"))
+        await bus.send(root_add_user(name="ada"))
 
     assert seen == []
 
@@ -341,7 +373,7 @@ async def test_emitted_event_publication_failure_propagates_from_send() -> None:
     bus.register_event_handler(UserAdded, failing_event_handler)
 
     with pytest.raises(EventPublicationError) as exc_info:
-        await bus.send(AddUser(name="ada"))
+        await bus.send(root_add_user(name="ada"))
 
     assert len(exc_info.value.failures) == 1
     assert isinstance(exc_info.value.failures[0], ValueError)
@@ -366,7 +398,7 @@ async def test_send_attempts_later_emitted_events_after_earlier_publication_fail
     bus.register_event_handler(UserAdded, handler)
 
     with pytest.raises(EventPublicationError) as exc_info:
-        await bus.send(AddUser(name="ada"))
+        await bus.send(root_add_user(name="ada"))
 
     assert seen == [1, 2]
     assert [type(failure) for failure in exc_info.value.failures] == [ValueError]
@@ -387,7 +419,7 @@ async def test_publish_raises_aggregate_error() -> None:
     bus.register_event_handler(UserAdded, bad_handler)
 
     with pytest.raises(EventPublicationError) as exc_info:
-        await bus.publish(UserAdded(user_id=3))
+        await bus.publish(root_user_added(user_id=3))
 
     assert len(exc_info.value.failures) == 1
     assert isinstance(exc_info.value.failures[0], ValueError)
@@ -417,7 +449,7 @@ async def test_send_applies_middleware_in_order() -> None:
 
     bus.register_command_handler(AddUser, handler)
 
-    result = await bus.send(AddUser(name="ada"))
+    result = await bus.send(root_add_user(name="ada"))
 
     assert result == "ada"
     assert events == [
@@ -445,7 +477,7 @@ async def test_publish_applies_middleware_once_for_the_operation() -> None:
 
     bus.register_event_handler(UserAdded, handler)
 
-    await bus.publish(UserAdded(user_id=9))
+    await bus.publish(root_user_added(user_id=9))
 
     assert events == ["before", "handler:9", "after"]
 
@@ -454,7 +486,7 @@ async def test_publish_applies_middleware_once_for_the_operation() -> None:
 async def test_publish_with_no_subscribers_is_a_no_op() -> None:
     bus = MessageBus()
 
-    await bus.publish(UserAdded(user_id=11))
+    await bus.publish(root_user_added(user_id=11))
 
 
 @pytest.mark.asyncio
@@ -474,7 +506,7 @@ async def test_subscriber_failures_are_ignored() -> None:
 
     bus.register_command_handler(AddUser, handler)
 
-    result = await bus.send(AddUser(name="ada"))
+    result = await bus.send(root_add_user(name="ada"))
 
     assert result == "ADA"
     assert seen == ["DispatchStarted", "HandlerStarted", "HandlerFinished", "DispatchFinished"]
@@ -494,7 +526,7 @@ async def test_send_emits_lifecycle_events_in_order() -> None:
 
     bus.register_command_handler(AddUser, handler)
 
-    result = await bus.send(AddUser(name="ada"))
+    result = await bus.send(root_add_user(name="ada"))
 
     assert result == "ADA"
     assert [type(event) for event in seen] == [
@@ -528,7 +560,7 @@ async def test_publish_emits_events_for_each_handler() -> None:
     bus.register_event_handler(UserAdded, first)
     bus.register_event_handler(UserAdded, second)
 
-    await bus.publish(UserAdded(user_id=7))
+    await bus.publish(root_user_added(user_id=7))
 
     assert [type(event) for event in seen] == [
         DispatchStarted,
@@ -563,7 +595,7 @@ async def test_original_and_emitted_event_failures_are_both_reported() -> None:
     bus.register_event_handler(UserAdded, fail_emitted)
 
     with pytest.raises(EventPublicationError) as exc_info:
-        await bus.publish(UserAdded(user_id=1))
+        await bus.publish(root_user_added(user_id=1))
 
     assert [type(failure) for failure in exc_info.value.failures] == [ValueError, RuntimeError]
     assert [str(failure) for failure in exc_info.value.failures] == [
@@ -593,7 +625,7 @@ async def test_original_failures_preserve_when_emitted_publish_raises_error() ->
     bus.register_event_handler(UserAdded, fail_original)
 
     with pytest.raises(EventPublicationError) as exc_info:
-        await bus.publish(UserAdded(user_id=1))
+        await bus.publish(root_user_added(user_id=1))
 
     assert [type(failure) for failure in exc_info.value.failures] == [ValueError, RuntimeError]
     assert [str(failure) for failure in exc_info.value.failures] == [
@@ -627,7 +659,7 @@ async def test_successful_event_handlers_still_publish_emitted_events_when_a_sib
     bus.register_event_handler(UserAdded, sink)
 
     with pytest.raises(EventPublicationError):
-        await bus.publish(UserAdded(user_id=1))
+        await bus.publish(root_user_added(user_id=1))
 
     assert seen == [
         "emitter:1",
@@ -658,7 +690,7 @@ async def test_publish_failure_emits_handler_failed_and_unsuccessful_dispatch_fi
     bus.register_event_handler(UserAdded, bad_handler)
 
     with pytest.raises(EventPublicationError):
-        await bus.publish(UserAdded(user_id=8))
+        await bus.publish(root_user_added(user_id=8))
 
     assert [type(event) for event in seen] == [
         DispatchStarted,
@@ -707,7 +739,7 @@ async def test_concurrent_event_handlers_can_interleave_emitted_follow_up_events
     bus.register_event_handler(UserAdded, second_handler)
     bus.register_event_handler(UserAdded, sink)
 
-    await bus.publish(UserAdded(user_id=1))
+    await bus.publish(root_user_added(user_id=1))
 
     assert "sink:10" in seen
     assert "sink:20" in seen
@@ -747,7 +779,7 @@ async def test_concurrent_handlers_publish_follow_up_events_without_waiting() ->
     bus.register_event_handler(UserAdded, emitting_handler)
     bus.register_event_handler(UserAdded, follow_up_handler)
 
-    await asyncio.wait_for(bus.publish(UserAdded(user_id=1)), timeout=1)
+    await asyncio.wait_for(bus.publish(root_user_added(user_id=1)), timeout=1)
 
     assert seen == [
         "waiting:start",
@@ -778,7 +810,7 @@ async def test_subscribers_see_nested_follow_up_publishes_as_normal_dispatches()
     bus.register_command_handler(AddUser, command_handler)
     bus.register_event_handler(UserAdded, event_handler)
 
-    assert await bus.send(AddUser(name="ada")) == "ada"
+    assert await bus.send(root_add_user(name="ada")) == "ada"
     assert seen == [
         ("DispatchStarted", "send"),
         ("DispatchStarted", "publish"),
@@ -810,7 +842,7 @@ async def test_publish_concurrent_events_keep_per_handler_order() -> None:
     bus.register_event_handler(UserAdded, first)
     bus.register_event_handler(UserAdded, second)
 
-    await bus.publish(UserAdded(user_id=9))
+    await bus.publish(root_user_added(user_id=9))
 
     grouped: dict[str, list[str]] = {}
     for event_name, name in seen:
@@ -834,7 +866,7 @@ async def test_sync_subscriber_receives_lifecycle_events() -> None:
 
     bus.register_command_handler(AddUser, handler)
 
-    result = await bus.send(AddUser(name="ada"))
+    result = await bus.send(root_add_user(name="ada"))
 
     assert result == "ADA"
     assert seen == ["DispatchStarted", "HandlerStarted", "HandlerFinished", "DispatchFinished"]
@@ -848,7 +880,7 @@ def test_send_sync_runs_command_through_background_runtime() -> None:
 
     bus.register_command_handler(AddUser, handler)
 
-    result = bus.send_sync(AddUser(name="ada"))
+    result = bus.send_sync(root_add_user(name="ada"))
 
     assert result == "sync:ada"
     bus.close()
@@ -863,7 +895,7 @@ def test_publish_sync_runs_event_handlers_through_background_runtime() -> None:
 
     bus.register_event_handler(UserAdded, handler)
 
-    bus.publish_sync(UserAdded(user_id=21))
+    bus.publish_sync(root_user_added(user_id=21))
 
     assert seen == ["event:21"]
     bus.close()
@@ -883,7 +915,7 @@ async def test_publish_can_run_handlers_sequentially() -> None:
     bus.register_event_handler(UserAdded, first)
     bus.register_event_handler(UserAdded, second)
 
-    await bus.publish(UserAdded(user_id=1))
+    await bus.publish(root_user_added(user_id=1))
 
     assert seen == ["first", "second"]
 
@@ -910,7 +942,7 @@ async def test_publish_can_run_handlers_concurrently() -> None:
     bus.register_event_handler(UserAdded, first)
     bus.register_event_handler(UserAdded, second)
 
-    await bus.publish(UserAdded(user_id=2))
+    await bus.publish(root_user_added(user_id=2))
 
     assert seen == ["first:start", "second:start", "second:end", "first:end"]
 
@@ -928,7 +960,7 @@ async def test_publish_handles_deep_emitted_event_chains_without_recursion_error
 
     bus.register_event_handler(UserAdded, handler)
 
-    await bus.publish(UserAdded(user_id=1))
+    await bus.publish(root_user_added(user_id=1))
 
     assert seen[0] == 1
     assert seen[-1] == limit
@@ -956,7 +988,7 @@ async def test_concurrent_publish_aggregates_sibling_and_follow_up_failures() ->
     bus.register_event_handler(UserAdded, follow_up_failure)
 
     with pytest.raises(EventPublicationError) as exc_info:
-        await bus.publish(UserAdded(user_id=1))
+        await bus.publish(root_user_added(user_id=1))
 
     assert [type(failure) for failure in exc_info.value.failures] == [ValueError, RuntimeError]
     assert [str(failure) for failure in exc_info.value.failures] == [
@@ -973,7 +1005,7 @@ async def test_aclose_stops_background_loop_created_by_sync_bridge() -> None:
         return command.name
 
     bus.register_command_handler(AddUser, handler)
-    assert await asyncio.to_thread(bus.send_sync, AddUser(name="ada")) == "ada"
+    assert await asyncio.to_thread(bus.send_sync, root_add_user(name="ada")) == "ada"
 
     await bus.aclose()
 
@@ -994,7 +1026,7 @@ async def test_aclose_waits_for_inflight_sync_bridge_work() -> None:
         return command.name.upper()
 
     def run_send() -> None:
-        result["value"] = bus.send_sync(AddUser(name="ada"))
+        result["value"] = bus.send_sync(root_add_user(name="ada"))
 
     bus.register_command_handler(AddUser, handler)
 
@@ -1029,14 +1061,14 @@ async def test_send_rejects_new_work_once_aclose_starts() -> None:
 
     bus.register_command_handler(AddUser, handler)
 
-    first_send = asyncio.create_task(bus.send(AddUser(name="ada")))
+    first_send = asyncio.create_task(bus.send(root_add_user(name="ada")))
     await started.wait()
 
     close_task = asyncio.create_task(bus.aclose())
     await asyncio.sleep(0)
 
     with pytest.raises(BusDrainingError, match="message bus is draining"):
-        await bus.send(AddUser(name="grace"))
+        await bus.send(root_add_user(name="grace"))
 
     release.set()
 
@@ -1056,14 +1088,14 @@ async def test_publish_rejects_new_work_once_aclose_starts() -> None:
 
     bus.register_event_handler(UserAdded, handler)
 
-    first_publish = asyncio.create_task(bus.publish(UserAdded(user_id=1)))
+    first_publish = asyncio.create_task(bus.publish(root_user_added(user_id=1)))
     await started.wait()
 
     close_task = asyncio.create_task(bus.aclose())
     await asyncio.sleep(0)
 
     with pytest.raises(BusDrainingError, match="message bus is draining"):
-        await bus.publish(UserAdded(user_id=2))
+        await bus.publish(root_user_added(user_id=2))
 
     release.set()
 
@@ -1081,7 +1113,7 @@ async def test_accepted_work_can_call_public_publish_during_drain() -> None:
     async def command_handler(command: AddUser) -> str:
         started.set()
         await release.wait()
-        await bus.publish(UserAdded(user_id=len(command.name)))
+        await bus.publish(root_user_added(user_id=len(command.name)))
         return command.name.upper()
 
     async def event_handler(event: UserAdded) -> None:
@@ -1090,7 +1122,7 @@ async def test_accepted_work_can_call_public_publish_during_drain() -> None:
     bus.register_command_handler(AddUser, command_handler)
     bus.register_event_handler(UserAdded, event_handler)
 
-    first_send = asyncio.create_task(bus.send(AddUser(name="ada")))
+    first_send = asyncio.create_task(bus.send(root_add_user(name="ada")))
     await started.wait()
 
     close_task = asyncio.create_task(bus.aclose())
@@ -1120,7 +1152,7 @@ async def test_child_task_publish_from_accepted_work_is_allowed_during_drain() -
 
         async def detached() -> None:
             detached_started.set()
-            await bus.publish(UserAdded(user_id=len(command.name)))
+            await bus.publish(root_user_added(user_id=len(command.name)))
 
         detached_publish = asyncio.create_task(detached())
         await detached_started.wait()
@@ -1135,7 +1167,7 @@ async def test_child_task_publish_from_accepted_work_is_allowed_during_drain() -
     bus.register_command_handler(AddUser, command_handler)
     bus.register_event_handler(UserAdded, event_handler)
 
-    send_task = asyncio.create_task(bus.send(AddUser(name="ada")))
+    send_task = asyncio.create_task(bus.send(root_add_user(name="ada")))
     await started.wait()
 
     close_task = asyncio.create_task(bus.aclose())
@@ -1166,19 +1198,31 @@ async def test_nested_send_from_accepted_work_is_rejected_during_drain() -> None
     release = asyncio.Event()
 
     @dataclass(frozen=True)
-    class AddAdmin:
+    class AddAdmin(CommandBase):
+        message_name = "admin.add"
+
         name: str
+        _metadata: MessageMetadata | None = None
+
+        @property
+        def metadata(self) -> MessageMetadata:
+            if self._metadata is None:
+                raise InvalidMessageError("AddAdmin is unstamped")
+            return self._metadata
+
+        def with_metadata(self, metadata: MessageMetadata) -> "AddAdmin":
+            return AddAdmin(name=self.name, _metadata=metadata)
 
     async def handler(command: AddUser) -> str:
         started.set()
         await release.wait()
         with pytest.raises(BusDrainingError, match="message bus is draining"):
-            await bus.send(AddAdmin(name="grace"))
+            await bus.send(AddAdmin(name="grace", _metadata=new_root_metadata()))
         return command.name.upper()
 
     bus.register_command_handler(AddUser, handler)
 
-    send_task = asyncio.create_task(bus.send(AddUser(name="ada")))
+    send_task = asyncio.create_task(bus.send(root_add_user(name="ada")))
     await started.wait()
 
     close_task = asyncio.create_task(bus.aclose())
@@ -1201,12 +1245,12 @@ async def test_child_task_send_from_accepted_work_is_rejected_during_drain() -> 
         nonlocal child_send
         started.set()
         await release.wait()
-        child_send = asyncio.create_task(bus.send(AddUser(name="grace")))
+        child_send = asyncio.create_task(bus.send(root_add_user(name="grace")))
         return command.name.upper()
 
     bus.register_command_handler(AddUser, handler)
 
-    send_task = asyncio.create_task(bus.send(AddUser(name="ada")))
+    send_task = asyncio.create_task(bus.send(root_add_user(name="ada")))
     await started.wait()
 
     close_task = asyncio.create_task(bus.aclose())
@@ -1237,7 +1281,7 @@ async def test_detached_tasks_are_rejected_after_bus_closes() -> None:
 
         async def detached() -> None:
             await allow_detached_publish.wait()
-            await bus.publish(UserAdded(user_id=len(command.name)))
+            await bus.publish(root_user_added(user_id=len(command.name)))
 
         detached_publish = asyncio.create_task(detached())
         return command.name.upper()
@@ -1248,7 +1292,7 @@ async def test_detached_tasks_are_rejected_after_bus_closes() -> None:
     bus.register_command_handler(AddUser, command_handler)
     bus.register_event_handler(UserAdded, event_handler)
 
-    first_send = asyncio.create_task(bus.send(AddUser(name="ada")))
+    first_send = asyncio.create_task(bus.send(root_add_user(name="ada")))
     await started.wait()
 
     close_task = asyncio.create_task(bus.aclose())
@@ -1275,7 +1319,7 @@ async def test_close_from_async_context_without_background_loop_raises_usage_err
         return command.name
 
     bus.register_command_handler(AddUser, handler)
-    assert await bus.send(AddUser(name="ada")) == "ada"
+    assert await bus.send(root_add_user(name="ada")) == "ada"
 
     with pytest.raises(BusUsageError, match=r"use await bus\.aclose\(\) from async code"):
         bus.close()
@@ -1291,7 +1335,7 @@ async def test_close_from_async_context_with_background_loop_raises_usage_error(
         return command.name
 
     bus.register_command_handler(AddUser, handler)
-    assert await asyncio.to_thread(bus.send_sync, AddUser(name="ada")) == "ada"
+    assert await asyncio.to_thread(bus.send_sync, root_add_user(name="ada")) == "ada"
 
     with pytest.raises(BusUsageError, match=r"use await bus\.aclose\(\) from async code"):
         bus.close()
@@ -1312,7 +1356,7 @@ async def test_send_sync_from_async_context_raises_usage_error() -> None:
         BusUsageError,
         match=r"send_sync\(\) cannot run inside an active event loop",
     ):
-        bus.send_sync(AddUser(name="ada"))
+        bus.send_sync(root_add_user(name="ada"))
 
 
 @pytest.mark.asyncio
@@ -1328,7 +1372,7 @@ async def test_publish_sync_from_async_context_raises_usage_error() -> None:
         BusUsageError,
         match=r"publish_sync\(\) cannot run inside an active event loop",
     ):
-        bus.publish_sync(UserAdded(user_id=1))
+        bus.publish_sync(root_user_added(user_id=1))
 
 
 @pytest.mark.asyncio
@@ -1344,7 +1388,7 @@ async def test_send_rejects_sync_command_handler_that_returns_awaitable() -> Non
     bus.register_command_handler(AddUser, handler)
 
     with pytest.raises(BusUsageError, match="sync handler returned an awaitable"):
-        await bus.send(AddUser(name="ada"))
+        await bus.send(root_add_user(name="ada"))
 
 
 @pytest.mark.asyncio
@@ -1360,7 +1404,7 @@ async def test_publish_rejects_sync_event_handler_that_returns_awaitable() -> No
     bus.register_event_handler(UserAdded, handler)
 
     with pytest.raises(EventPublicationError) as exc_info:
-        await bus.publish(UserAdded(user_id=1))
+        await bus.publish(root_user_added(user_id=1))
 
     assert len(exc_info.value.failures) == 1
     assert isinstance(exc_info.value.failures[0], BusUsageError)
@@ -1387,7 +1431,7 @@ async def test_subscriber_returning_awaitable_does_not_fail_dispatch() -> None:
 
     bus.register_command_handler(AddUser, handler)
 
-    assert await bus.send(AddUser(name="ada")) == "ada"
+    assert await bus.send(root_add_user(name="ada")) == "ada"
     assert seen == []
 
 
@@ -1421,7 +1465,7 @@ def test_concurrent_send_sync_starts_only_one_background_thread(
 
     def worker(name: str) -> None:
         ready.wait()
-        results.append(bus.send_sync(AddUser(name=name)))
+        results.append(bus.send_sync(root_add_user(name=name)))
 
     first = threading.Thread(target=worker, args=("ada",))
     second = threading.Thread(target=worker, args=("grace",))
@@ -1447,12 +1491,12 @@ def test_close_rejects_new_sync_work() -> None:
 
     bus.register_command_handler(AddUser, handler)
 
-    assert bus.send_sync(AddUser(name="ada")) == "ADA"
+    assert bus.send_sync(root_add_user(name="ada")) == "ADA"
 
     bus.close()
 
     with pytest.raises(BusDrainingError, match="message bus is draining"):
-        bus.send_sync(AddUser(name="grace"))
+        bus.send_sync(root_add_user(name="grace"))
 
 
 def test_send_sync_rejects_new_work_after_close() -> None:
@@ -1463,12 +1507,12 @@ def test_send_sync_rejects_new_work_after_close() -> None:
 
     bus.register_command_handler(AddUser, handler)
 
-    assert bus.send_sync(AddUser(name="ada")) == "ADA"
+    assert bus.send_sync(root_add_user(name="ada")) == "ADA"
 
     bus.close()
 
     with pytest.raises(BusDrainingError, match="message bus is draining"):
-        bus.send_sync(AddUser(name="grace"))
+        bus.send_sync(root_add_user(name="grace"))
 
 
 def test_publish_sync_rejects_new_work_after_close() -> None:
@@ -1480,13 +1524,13 @@ def test_publish_sync_rejects_new_work_after_close() -> None:
 
     bus.register_event_handler(UserAdded, handler)
 
-    bus.publish_sync(UserAdded(user_id=1))
+    bus.publish_sync(root_user_added(user_id=1))
     assert seen == [1]
 
     bus.close()
 
     with pytest.raises(BusDrainingError, match="message bus is draining"):
-        bus.publish_sync(UserAdded(user_id=2))
+        bus.publish_sync(root_user_added(user_id=2))
 
 
 @pytest.mark.asyncio
@@ -1497,7 +1541,7 @@ async def test_repeated_aclose_is_harmless() -> None:
         return command.name
 
     bus.register_command_handler(AddUser, handler)
-    assert await asyncio.to_thread(bus.send_sync, AddUser(name="ada")) == "ada"
+    assert await asyncio.to_thread(bus.send_sync, root_add_user(name="ada")) == "ada"
 
     await bus.aclose()
     await bus.aclose()
@@ -1513,7 +1557,7 @@ def test_repeated_close_is_harmless() -> None:
         return command.name
 
     bus.register_command_handler(AddUser, handler)
-    assert bus.send_sync(AddUser(name="ada")) == "ada"
+    assert bus.send_sync(root_add_user(name="ada")) == "ada"
 
     bus.close()
     bus.close()
@@ -1534,7 +1578,7 @@ async def test_aclose_waits_for_accepted_send_to_finish() -> None:
 
     bus.register_command_handler(AddUser, handler)
 
-    send_task = asyncio.create_task(bus.send(AddUser(name="ada")))
+    send_task = asyncio.create_task(bus.send(root_add_user(name="ada")))
     await started.wait()
 
     close_task = asyncio.create_task(bus.aclose())
@@ -1572,7 +1616,7 @@ async def test_aclose_allows_follow_up_events_from_accepted_work() -> None:
     bus.register_command_handler(AddUser, command_handler)
     bus.register_event_handler(UserAdded, event_handler)
 
-    send_task = asyncio.create_task(bus.send(AddUser(name="ada")))
+    send_task = asyncio.create_task(bus.send(root_add_user(name="ada")))
     await started.wait()
 
     close_task = asyncio.create_task(bus.aclose())
