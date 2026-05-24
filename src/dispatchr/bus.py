@@ -1,25 +1,18 @@
 import asyncio
-import contextvars
 import threading
 from collections import deque
 from collections.abc import Sequence
 from concurrent.futures import Future
 from datetime import datetime
-from enum import Enum, auto
 from time import perf_counter
 from typing import Any
 
-from dispatchr.exceptions import BusDrainingError, BusUsageError, EventPublicationError
+from dispatchr.exceptions import BusUsageError, EventPublicationError
+from dispatchr.lifecycle import BusLifecycle
 from dispatchr.middleware import Middleware, compose_middleware
 from dispatchr.observability import DispatchFinished, DispatchStarted, Subscriber, new_dispatch_id
 from dispatchr.registry import HandlerRegistry
 from dispatchr.runtime import EventConcurrency, MessageRuntime
-
-
-class _BusState(Enum):
-    OPEN = auto()
-    DRAINING = auto()
-    CLOSED = auto()
 
 
 class MessageBus:
@@ -38,15 +31,7 @@ class MessageBus:
         self._thread: threading.Thread | None = None
         self._loop_ready = threading.Event()
         self._loop_start_lock = threading.Lock()
-        self._state = _BusState.OPEN
-        self._in_flight_dispatches = 0
-        self._state_lock = threading.Lock()
-        self._drained = threading.Event()
-        self._drained.set()
-        self._accepted_publish_depth: contextvars.ContextVar[int] = contextvars.ContextVar(
-            "dispatchr_bus_accepted_publish_depth",
-            default=0,
-        )
+        self._lifecycle = BusLifecycle()
 
     def register_command_handler(self, message_type: type[Any], handler: Any) -> None:
         self._registry.register_command_handler(message_type, handler)
@@ -58,11 +43,11 @@ class MessageBus:
         self._subscribers.append(subscriber)
 
     async def send(self, command: Any) -> Any:
-        token, counted = await self._enter_dispatch(operation="send")
+        token = await self._lifecycle.enter_send()
         try:
             return await self._send_impl(command)
         finally:
-            await self._leave_dispatch(token, counted)
+            await self._lifecycle.leave_dispatch(token)
 
     async def _send_impl(self, command: Any) -> Any:
         handler = self._registry.get_command_handler(type(command))
@@ -134,11 +119,11 @@ class MessageBus:
         return result
 
     async def publish(self, event: Any) -> None:
-        token, counted = await self._enter_dispatch(operation="publish")
+        token = await self._lifecycle.enter_publish()
         try:
             await self._publish_impl(event)
         finally:
-            await self._leave_dispatch(token, counted)
+            await self._lifecycle.leave_dispatch(token)
 
     async def _publish_impl(self, event: Any) -> None:
         pending_events = deque([event])
@@ -280,41 +265,9 @@ class MessageBus:
             self._loop_ready.clear()
 
     async def _drain_and_close_runtime(self) -> None:
-        with self._state_lock:
-            if self._state is _BusState.CLOSED:
-                return
-            self._state = _BusState.DRAINING
-            drained = self._drained.is_set()
-
-        if not drained:
-            await asyncio.to_thread(self._drained.wait)
-
-        with self._state_lock:
-            self._state = _BusState.CLOSED
-
+        await self._lifecycle.begin_close()
         await self._runtime.aclose()
-
-    async def _enter_dispatch(self, *, operation: str) -> tuple[contextvars.Token[int], bool]:
-        current_depth = self._accepted_publish_depth.get()
-        with self._state_lock:
-            if self._state is _BusState.CLOSED:
-                raise BusDrainingError("message bus is draining")
-            if operation == "send" and self._state is not _BusState.OPEN:
-                raise BusDrainingError("message bus is draining")
-            if operation == "publish" and self._state is _BusState.DRAINING and current_depth == 0:
-                raise BusDrainingError("message bus is draining")
-            self._in_flight_dispatches += 1
-            self._drained.clear()
-        return self._accepted_publish_depth.set(current_depth + 1), True
-
-    async def _leave_dispatch(self, token: contextvars.Token[int], counted: bool) -> None:
-        self._accepted_publish_depth.reset(token)
-        if not counted:
-            return
-        with self._state_lock:
-            self._in_flight_dispatches -= 1
-            if self._in_flight_dispatches == 0:
-                self._drained.set()
+        await self._lifecycle.finish_close()
 
     def _run_sync(self, coroutine: Any, timeout: float | None = None) -> Any:
         self._ensure_background_loop()

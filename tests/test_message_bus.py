@@ -862,6 +862,12 @@ def test_publish_sync_runs_event_handlers_through_background_runtime() -> None:
     bus.close()
 
 
+def test_message_bus_uses_lifecycle_collaborator() -> None:
+    bus = MessageBus()
+
+    assert bus._lifecycle is not None
+
+
 @pytest.mark.asyncio
 async def test_publish_can_run_handlers_sequentially() -> None:
     bus = MessageBus(event_concurrency="sequential")
