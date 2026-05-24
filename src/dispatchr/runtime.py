@@ -195,7 +195,7 @@ class MessageRuntime:
         started = perf_counter()
         handler = registered_handler.handler
         name = handler_name(handler)
-        context = EventContext()
+        context = EventContext(message.metadata)
         await self.notify_subscribers(
             subscribers,
             HandlerStarted(

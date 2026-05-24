@@ -6,7 +6,13 @@ from functools import partial
 import pytest
 
 from dispatchr.bus import MessageBus
-from dispatchr.exceptions import BusDrainingError, BusUsageError, EventPublicationError
+from dispatchr.exceptions import (
+    BusDrainingError,
+    BusUsageError,
+    EventPublicationError,
+    InvalidMessageError,
+)
+from dispatchr.messages import CommandBase, EventBase, MessageMetadata, new_root_metadata
 from dispatchr.observability import (
     DispatchFinished,
     DispatchStarted,
@@ -25,6 +31,88 @@ class AddUser:
 @dataclass(frozen=True)
 class UserAdded:
     user_id: int
+
+
+@pytest.mark.asyncio
+async def test_send_propagates_correlation_and_causation_to_emitted_events() -> None:
+    bus = MessageBus(event_concurrency="sequential")
+    seen: list[EventBase] = []
+
+    @dataclass(frozen=True)
+    class AddStampedUser(CommandBase):
+        message_name = "user.add"
+        name: str
+        _metadata: MessageMetadata | None = None
+
+        @property
+        def metadata(self) -> MessageMetadata:
+            if self._metadata is None:
+                raise ValueError("unstamped")
+            return self._metadata
+
+        def with_metadata(self, metadata: MessageMetadata) -> "AddStampedUser":
+            return AddStampedUser(name=self.name, _metadata=metadata)
+
+    @dataclass(frozen=True)
+    class UserStampedAdded(EventBase):
+        message_name = "user.added"
+        user_id: int
+        _metadata: MessageMetadata | None = None
+
+        @property
+        def metadata(self) -> MessageMetadata:
+            if self._metadata is None:
+                raise ValueError("unstamped")
+            return self._metadata
+
+        def with_metadata(self, metadata: MessageMetadata) -> "UserStampedAdded":
+            return UserStampedAdded(user_id=self.user_id, _metadata=metadata)
+
+    async def command_handler(command: AddStampedUser, context) -> str:
+        context.emit(UserStampedAdded(user_id=3))
+        return command.name.upper()
+
+    async def event_handler(event: UserStampedAdded) -> None:
+        seen.append(event)
+
+    bus.register_command_handler(AddStampedUser, command_handler)
+    bus.register_event_handler(UserStampedAdded, event_handler)
+
+    command = AddStampedUser(name="ada", _metadata=new_root_metadata(correlation_id="trace-1"))
+    assert await bus.send(command) == "ADA"
+
+    emitted = seen[0]
+    assert emitted.metadata.correlation_id == "trace-1"
+    assert emitted.metadata.causation_id == command.metadata.message_id
+
+
+@pytest.mark.asyncio
+async def test_emit_rejects_non_event_instances() -> None:
+    bus = MessageBus()
+
+    @dataclass(frozen=True)
+    class AddStampedUser(CommandBase):
+        message_name = "user.add"
+        name: str
+        _metadata: MessageMetadata | None = None
+
+        @property
+        def metadata(self) -> MessageMetadata:
+            if self._metadata is None:
+                raise ValueError("unstamped")
+            return self._metadata
+
+        def with_metadata(self, metadata: MessageMetadata) -> "AddStampedUser":
+            return AddStampedUser(name=self.name, _metadata=metadata)
+
+    async def handler(command: AddStampedUser, context) -> str:
+        context.emit({"user_id": 1})
+        return command.name
+
+    bus.register_command_handler(AddStampedUser, handler)
+
+    with pytest.raises(InvalidMessageError, match="EventBase"):
+        await bus.send(AddStampedUser(name="ada", _metadata=new_root_metadata()))
 
 
 @pytest.mark.asyncio
