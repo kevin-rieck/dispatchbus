@@ -1331,6 +1331,32 @@ async def test_close_from_async_context_with_background_loop_raises_usage_error(
     await bus.aclose()
 
 
+@pytest.mark.asyncio
+async def test_send_sync_from_async_context_raises_usage_error() -> None:
+    bus = MessageBus()
+
+    def handler(command: AddUser) -> str:
+        return command.name.upper()
+
+    bus.register_command_handler(AddUser, handler)
+
+    with pytest.raises(BusUsageError, match=r"send_sync\(\) cannot run inside an active event loop"):
+        bus.send_sync(AddUser(name="ada"))
+
+
+@pytest.mark.asyncio
+async def test_publish_sync_from_async_context_raises_usage_error() -> None:
+    bus = MessageBus()
+
+    def handler(event: UserAdded) -> None:
+        return None
+
+    bus.register_event_handler(UserAdded, handler)
+
+    with pytest.raises(BusUsageError, match=r"publish_sync\(\) cannot run inside an active event loop"):
+        bus.publish_sync(UserAdded(user_id=1))
+
+
 def test_close_rejects_new_sync_work() -> None:
     bus = MessageBus()
 

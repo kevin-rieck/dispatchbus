@@ -236,9 +236,17 @@ class MessageBus:
         return [], []
 
     def send_sync(self, command: Any, timeout: float | None = None) -> Any:
+        if self._in_running_loop_thread():
+            raise BusUsageError(
+                "send_sync() cannot run inside an active event loop; use await bus.send(...)"
+            )
         return self._run_sync(self.send(command), timeout=timeout)
 
     def publish_sync(self, event: Any, timeout: float | None = None) -> None:
+        if self._in_running_loop_thread():
+            raise BusUsageError(
+                "publish_sync() cannot run inside an active event loop; use await bus.publish(...)"
+            )
         self._run_sync(self.publish(event), timeout=timeout)
 
     def close(self) -> None:

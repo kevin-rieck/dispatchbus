@@ -85,3 +85,10 @@ async def audit(event: object) -> None:
 
 bus = MessageBus(subscribers=[audit])
 ```
+
+## Sync vs async API usage
+
+- Use `await bus.send(...)` and `await bus.publish(...)` from async code.
+- Use `bus.send_sync(...)` and `bus.publish_sync(...)` only from synchronous code.
+- Use `await bus.aclose()` from async code.
+- Use `bus.close()` only from synchronous code.
