@@ -99,3 +99,18 @@ bus = MessageBus(subscribers=[audit])
 - Use `bus.send_sync(...)` and `bus.publish_sync(...)` only from synchronous code.
 - Use `await bus.aclose()` from async code.
 - Use `bus.close()` only from synchronous code.
+
+## Dispatch semantics
+
+- A command has exactly one handler.
+- An event may have zero or more handlers.
+- Handler lookup uses the exact runtime type of the message.
+- In sequential event mode, handlers for a given event run in registration order.
+- In concurrent event mode, handlers are started together and may finish in any order.
+- Follow-up events emitted by different concurrent handlers may interleave.
+
+## Operational notes
+
+- Sync handlers and sync subscribers run in the runtime thread pool executor.
+- Long-running blocking sync work can reduce throughput for other sync handlers.
+- Prefer `async def` handlers for I/O-bound work when possible.
