@@ -1,15 +1,13 @@
 import asyncio
 from collections.abc import Sequence
-from datetime import datetime
-from time import perf_counter
 from typing import Any
 
 from dispatchr.command_dispatch import CommandDispatcher
 from dispatchr.event_publisher import EventPublisher
 from dispatchr.exceptions import BusUsageError
 from dispatchr.lifecycle import BusLifecycle
-from dispatchr.middleware import Middleware, compose_middleware
-from dispatchr.observability import DispatchFinished, DispatchStarted, Subscriber, new_dispatch_id
+from dispatchr.middleware import Middleware
+from dispatchr.observability import Subscriber
 from dispatchr.registry import HandlerRegistry
 from dispatchr.runtime import EventConcurrency, MessageRuntime
 from dispatchr.sync_bridge import SyncBridge
