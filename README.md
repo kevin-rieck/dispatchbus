@@ -4,16 +4,36 @@ Minimal Python project scaffolded for modern tooling:
 
 - `uv` for environment management, dependency installation, locking, and builds
 - `ruff` for linting and formatting
+- `just` for local workflow commands
 
 ## Quick start
 
+Install development dependencies:
+
 ```powershell
 uv sync --dev
-uv run ruff check .
-uv run pyright
-uv run ruff format .
-uv run dispatchr
-uv build
+```
+
+Install `just`:
+- See https://github.com/casey/just#installation
+
+Recommended workflow:
+
+```powershell
+just format
+just check
+```
+
+Available commands:
+
+```powershell
+just format     # auto-format source files
+just lint       # run Ruff lint checks
+just typecheck  # run Pyright
+just test       # run pytest
+just build      # build sdist and wheel
+just check      # format check, lint, typecheck, test, build
+just all        # format, then run full check pipeline
 ```
 
 ## Message bus example
