@@ -28,3 +28,7 @@ class BusDrainingError(DispatchrError):
 
 class BusUsageError(DispatchrError):
     """Raised when the message bus API is used from an invalid runtime context."""
+
+
+class InvalidMessageError(DispatchrError):
+    """Raised when a message violates the dispatchr message contract."""
