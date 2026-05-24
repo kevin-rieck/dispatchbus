@@ -2,6 +2,7 @@
 
 from dispatchr.bus import MessageBus
 from dispatchr.exceptions import (
+    BusUsageError,
     DispatchrError,
     DuplicateCommandHandlerError,
     EventPublicationError,
@@ -19,6 +20,7 @@ from dispatchr.observability import (
 __all__ = [
     "DispatchFinished",
     "DispatchStarted",
+    "BusUsageError",
     "DispatchrError",
     "DuplicateCommandHandlerError",
     "EventPublicationError",

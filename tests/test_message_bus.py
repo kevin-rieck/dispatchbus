@@ -9,7 +9,12 @@ from typing import Any, cast
 import pytest
 
 from dispatchr.bus import MessageBus
-from dispatchr.exceptions import BusDrainingError, EventPublicationError, HandlerRegistrationError
+from dispatchr.exceptions import (
+    BusDrainingError,
+    BusUsageError,
+    EventPublicationError,
+    HandlerRegistrationError,
+)
 from dispatchr.observability import (
     DispatchFinished,
     DispatchStarted,
@@ -1292,6 +1297,38 @@ async def test_detached_tasks_are_rejected_after_bus_closes() -> None:
         await detached_publish
 
     assert seen == []
+
+
+@pytest.mark.asyncio
+async def test_close_from_async_context_without_background_loop_raises_usage_error() -> None:
+    bus = MessageBus()
+
+    async def handler(command: AddUser) -> str:
+        return command.name
+
+    bus.register_command_handler(AddUser, handler)
+    assert await bus.send(AddUser(name="ada")) == "ada"
+
+    with pytest.raises(BusUsageError, match=r"use await bus\.aclose\(\) from async code"):
+        bus.close()
+
+    await bus.aclose()
+
+
+@pytest.mark.asyncio
+async def test_close_from_async_context_with_background_loop_raises_usage_error() -> None:
+    bus = MessageBus()
+
+    def handler(command: AddUser) -> str:
+        return command.name
+
+    bus.register_command_handler(AddUser, handler)
+    assert await asyncio.to_thread(bus.send_sync, AddUser(name="ada")) == "ada"
+
+    with pytest.raises(BusUsageError, match=r"use await bus\.aclose\(\) from async code"):
+        bus.close()
+
+    await bus.aclose()
 
 
 def test_close_rejects_new_sync_work() -> None:

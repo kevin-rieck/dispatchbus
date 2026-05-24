@@ -9,7 +9,7 @@ from enum import Enum, auto
 from time import perf_counter
 from typing import Any
 
-from dispatchr.exceptions import BusDrainingError, EventPublicationError
+from dispatchr.exceptions import BusDrainingError, BusUsageError, EventPublicationError
 from dispatchr.middleware import Middleware, compose_middleware
 from dispatchr.observability import DispatchFinished, DispatchStarted, Subscriber, new_dispatch_id
 from dispatchr.registry import HandlerRegistry
@@ -242,6 +242,10 @@ class MessageBus:
         self._run_sync(self.publish(event), timeout=timeout)
 
     def close(self) -> None:
+        if self._in_running_loop_thread():
+            raise BusUsageError(
+                "close() cannot run inside an active event loop; use await bus.aclose() from async code"
+            )
         if self._loop is None:
             asyncio.run(self._drain_and_close_runtime())
             return
@@ -307,6 +311,13 @@ class MessageBus:
         assert self._loop is not None
         future: Future[Any] = asyncio.run_coroutine_threadsafe(coroutine, self._loop)
         return future.result(timeout=timeout)
+
+    def _in_running_loop_thread(self) -> bool:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return False
+        return True
 
     def _ensure_background_loop(self) -> None:
         if self._loop is not None:

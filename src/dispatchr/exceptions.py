@@ -24,3 +24,7 @@ class EventPublicationError(DispatchrError):
 
 class BusDrainingError(DispatchrError):
     """Raised when the message bus is draining and not accepting new messages."""
+
+
+class BusUsageError(DispatchrError):
+    """Raised when the message bus API is used from an invalid runtime context."""
