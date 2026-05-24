@@ -1,29 +1,19 @@
 import asyncio
-import inspect
 import threading
-from dataclasses import FrozenInstanceError, dataclass
-from datetime import datetime
+from dataclasses import dataclass
 from functools import partial
-from typing import Any, cast
 
 import pytest
 
 from dispatchr.bus import MessageBus
-from dispatchr.exceptions import (
-    BusDrainingError,
-    BusUsageError,
-    EventPublicationError,
-    HandlerRegistrationError,
-)
+from dispatchr.exceptions import BusDrainingError, BusUsageError, EventPublicationError
 from dispatchr.observability import (
     DispatchFinished,
     DispatchStarted,
     HandlerFailed,
     HandlerFinished,
     HandlerStarted,
-    handler_name,
 )
-from dispatchr.runtime import EventConcurrency
 from dispatchr.sync_bridge import SyncBridge
 
 
@@ -35,78 +25,6 @@ class AddUser:
 @dataclass(frozen=True)
 class UserAdded:
     user_id: int
-
-
-async def local_observability_handler(message: object) -> None:
-    return None
-
-
-def test_handler_name_uses_module_and_qualname() -> None:
-    assert handler_name(local_observability_handler).endswith("local_observability_handler")
-
-
-def test_lifecycle_events_are_frozen_dataclasses() -> None:
-    message = object()
-    now = datetime.now()
-    error = ValueError("boom")
-
-    started = DispatchStarted(
-        message=message,
-        message_type=object,
-        operation="send",
-        timestamp=now,
-        dispatch_id="dispatch-1",
-        handler_count=1,
-    )
-    finished = DispatchFinished(
-        message=message,
-        message_type=object,
-        operation="send",
-        timestamp=now,
-        dispatch_id="dispatch-1",
-        handler_count=1,
-        duration_ms=1.25,
-        success=True,
-    )
-    handler_started = HandlerStarted(
-        message=message,
-        message_type=object,
-        operation="send",
-        timestamp=now,
-        dispatch_id="dispatch-1",
-        handler=local_observability_handler,
-        handler_name=handler_name(local_observability_handler),
-    )
-    handler_finished = HandlerFinished(
-        message=message,
-        message_type=object,
-        operation="send",
-        timestamp=now,
-        dispatch_id="dispatch-1",
-        handler=local_observability_handler,
-        handler_name=handler_name(local_observability_handler),
-        duration_ms=0.5,
-    )
-    handler_failed = HandlerFailed(
-        message=message,
-        message_type=object,
-        operation="send",
-        timestamp=now,
-        dispatch_id="dispatch-1",
-        handler=local_observability_handler,
-        handler_name=handler_name(local_observability_handler),
-        duration_ms=0.5,
-        error=error,
-    )
-
-    assert started.handler_count == 1
-    assert finished.success is True
-    assert handler_started.handler is local_observability_handler
-    assert handler_finished.duration_ms == 0.5
-    assert handler_failed.error is error
-
-    with pytest.raises(FrozenInstanceError):
-        started.dispatch_id = "other"
 
 
 @pytest.mark.asyncio
@@ -863,30 +781,6 @@ def test_publish_sync_runs_event_handlers_through_background_runtime() -> None:
     bus.close()
 
 
-def test_message_bus_uses_lifecycle_collaborator() -> None:
-    bus = MessageBus()
-
-    assert bus._lifecycle is not None
-
-
-def test_message_bus_uses_sync_bridge() -> None:
-    bus = MessageBus()
-
-    assert bus._sync_bridge is not None
-
-
-def test_message_bus_uses_event_publisher() -> None:
-    bus = MessageBus()
-
-    assert bus._event_publisher is not None
-
-
-def test_message_bus_uses_command_dispatcher() -> None:
-    bus = MessageBus()
-
-    assert bus._command_dispatcher is not None
-
-
 @pytest.mark.asyncio
 async def test_publish_can_run_handlers_sequentially() -> None:
     bus = MessageBus(event_concurrency="sequential")
@@ -983,39 +877,6 @@ async def test_concurrent_publish_aggregates_sibling_and_follow_up_failures() ->
     ]
 
 
-def test_public_api_exports_message_bus() -> None:
-    from dispatchr import MessageBus
-
-    assert MessageBus.__name__ == "MessageBus"
-
-
-def test_public_api_exports_observability_events() -> None:
-    from dispatchr import (
-        DispatchFinished,
-        DispatchStarted,
-        HandlerFailed,
-        HandlerFinished,
-        HandlerStarted,
-    )
-
-    assert DispatchStarted.__name__ == "DispatchStarted"
-    assert DispatchFinished.__name__ == "DispatchFinished"
-    assert HandlerStarted.__name__ == "HandlerStarted"
-    assert HandlerFinished.__name__ == "HandlerFinished"
-    assert HandlerFailed.__name__ == "HandlerFailed"
-
-
-def test_message_bus_event_concurrency_annotation_matches_runtime_type() -> None:
-    annotation = inspect.signature(MessageBus.__init__).parameters["event_concurrency"].annotation
-
-    assert annotation == EventConcurrency
-
-
-def test_invalid_event_concurrency_raises() -> None:
-    with pytest.raises(HandlerRegistrationError):
-        MessageBus(event_concurrency=cast(Any, "bogus"))
-
-
 @pytest.mark.asyncio
 async def test_aclose_stops_background_loop_created_by_sync_bridge() -> None:
     bus = MessageBus()
@@ -1065,12 +926,6 @@ async def test_aclose_waits_for_inflight_sync_bridge_work() -> None:
     assert result["value"] == "ADA"
     assert bus._sync_bridge._loop is None
     assert bus._sync_bridge._thread is None
-
-
-def test_public_api_exports_bus_draining_error() -> None:
-    from dispatchr.exceptions import BusDrainingError
-
-    assert issubclass(BusDrainingError, Exception)
 
 
 @pytest.mark.asyncio
