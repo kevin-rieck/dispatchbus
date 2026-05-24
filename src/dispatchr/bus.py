@@ -6,6 +6,7 @@ from dispatchr.command_dispatch import CommandDispatcher
 from dispatchr.event_publisher import EventPublisher
 from dispatchr.exceptions import BusUsageError
 from dispatchr.lifecycle import BusLifecycle
+from dispatchr.messages import CommandBase, EventBase
 from dispatchr.middleware import Middleware
 from dispatchr.observability import Subscriber
 from dispatchr.registry import HandlerRegistry
@@ -51,6 +52,7 @@ class MessageBus:
         self._subscribers.append(subscriber)
 
     async def send(self, command: Any) -> Any:
+        self._require_command_instance(command)
         token = await self._lifecycle.enter_send()
         try:
             return await self._send_impl(command)
@@ -61,6 +63,7 @@ class MessageBus:
         return await self._command_dispatcher.send(command)
 
     async def publish(self, event: Any) -> None:
+        self._require_event_instance(event)
         token = await self._lifecycle.enter_publish()
         try:
             await self._publish_impl(event)
@@ -105,6 +108,26 @@ class MessageBus:
         await self._lifecycle.begin_close()
         await self._runtime.aclose()
         await self._lifecycle.finish_close()
+
+    def _require_command_instance(self, message: Any) -> None:
+        if not isinstance(message, CommandBase):
+            raise BusUsageError(
+                f"send() requires a CommandBase instance, got {type(message).__name__}"
+            )
+        try:
+            message.metadata
+        except Exception as exc:
+            raise BusUsageError("send() requires a stamped root command") from exc
+
+    def _require_event_instance(self, message: Any) -> None:
+        if not isinstance(message, EventBase):
+            raise BusUsageError(
+                f"publish() requires an EventBase instance, got {type(message).__name__}"
+            )
+        try:
+            message.metadata
+        except Exception as exc:
+            raise BusUsageError("publish() requires a stamped root event") from exc
 
     def _in_running_loop_thread(self) -> bool:
         try:

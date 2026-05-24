@@ -4,7 +4,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from dispatchr.exceptions import DuplicateCommandHandlerError, NoCommandHandlerError
+from dispatchr.exceptions import (
+    DuplicateCommandHandlerError,
+    HandlerRegistrationError,
+    NoCommandHandlerError,
+)
+from dispatchr.messages import CommandBase, EventBase
 
 Handler = Callable[..., Any]
 ContextStyle = Literal["none", "positional", "keyword"]
@@ -58,12 +63,27 @@ def _register_handler(handler: Callable[..., Any]) -> RegisteredHandler:
     )
 
 
+def _require_command_type(message_type: type[Any]) -> None:
+    if not issubclass(message_type, CommandBase):
+        raise HandlerRegistrationError(
+            f"command handlers require a CommandBase subclass, got {message_type.__name__}"
+        )
+
+
+def _require_event_type(message_type: type[Any]) -> None:
+    if not issubclass(message_type, EventBase):
+        raise HandlerRegistrationError(
+            f"event handlers require an EventBase subclass, got {message_type.__name__}"
+        )
+
+
 class HandlerRegistry:
     def __init__(self) -> None:
         self._command_handlers: dict[type[Any], RegisteredHandler] = {}
         self._event_handlers: dict[type[Any], list[RegisteredHandler]] = defaultdict(list)
 
     def register_command_handler(self, message_type: type[Any], handler: Handler) -> None:
+        _require_command_type(message_type)
         if message_type in self._command_handlers:
             raise DuplicateCommandHandlerError(
                 f"command handler already registered for {message_type.__name__}"
@@ -71,6 +91,7 @@ class HandlerRegistry:
         self._command_handlers[message_type] = _register_handler(handler)
 
     def register_event_handler(self, message_type: type[Any], handler: Handler) -> None:
+        _require_event_type(message_type)
         self._event_handlers[message_type].append(_register_handler(handler))
 
     def get_command_handler(self, message_type: type[Any]) -> RegisteredHandler:

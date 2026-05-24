@@ -2,18 +2,48 @@ from dataclasses import dataclass
 
 import pytest
 
-from dispatchr.exceptions import DuplicateCommandHandlerError, NoCommandHandlerError
+from dispatchr.exceptions import (
+    DuplicateCommandHandlerError,
+    HandlerRegistrationError,
+    InvalidMessageError,
+    NoCommandHandlerError,
+)
+from dispatchr.messages import CommandBase, EventBase, MessageMetadata
 from dispatchr.registry import HandlerRegistry
 
 
 @dataclass(frozen=True)
-class CreateUser:
+class CreateUser(CommandBase):
+    message_name = "user.create"
+
     name: str
+    _metadata: MessageMetadata | None = None
+
+    @property
+    def metadata(self) -> MessageMetadata:
+        if self._metadata is None:
+            raise InvalidMessageError("CreateUser is unstamped")
+        return self._metadata
+
+    def with_metadata(self, metadata: MessageMetadata) -> "CreateUser":
+        return CreateUser(name=self.name, _metadata=metadata)
 
 
 @dataclass(frozen=True)
-class UserCreated:
+class UserCreated(EventBase):
+    message_name = "user.created"
+
     user_id: int
+    _metadata: MessageMetadata | None = None
+
+    @property
+    def metadata(self) -> MessageMetadata:
+        if self._metadata is None:
+            raise InvalidMessageError("UserCreated is unstamped")
+        return self._metadata
+
+    def with_metadata(self, metadata: MessageMetadata) -> "UserCreated":
+        return UserCreated(user_id=self.user_id, _metadata=metadata)
 
 
 async def async_create_user(command: CreateUser) -> str:
@@ -86,3 +116,17 @@ def test_missing_event_handlers_returns_empty_list() -> None:
     registry = HandlerRegistry()
 
     assert registry.get_event_handlers(UserCreated) == []
+
+
+def test_register_command_handler_rejects_non_command_type() -> None:
+    registry = HandlerRegistry()
+
+    with pytest.raises(HandlerRegistrationError, match="CommandBase"):
+        registry.register_command_handler(UserCreated, async_create_user)
+
+
+def test_register_event_handler_rejects_non_event_type() -> None:
+    registry = HandlerRegistry()
+
+    with pytest.raises(HandlerRegistrationError, match="EventBase"):
+        registry.register_event_handler(CreateUser, on_user_created)
