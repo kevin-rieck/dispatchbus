@@ -5,8 +5,9 @@ from io import StringIO
 
 import pytest
 
-from dispatchr import MessageBus
+from dispatchr import CommandBase, MessageBus, MessageMetadata, new_root_metadata
 from dispatchr.debug import DebugSubscriber, debug_subscriber_human, debug_subscriber_key_value
+from dispatchr.exceptions import InvalidMessageError
 from dispatchr.observability import (
     DispatchFinished,
     DispatchStarted,
@@ -20,9 +21,21 @@ async def sample_handler(message: object) -> None:
     return None
 
 
-class AddUser:
-    def __init__(self, name: str) -> None:
+class AddUser(CommandBase):
+    message_name = "user.add"
+
+    def __init__(self, name: str, _metadata: MessageMetadata | None = None) -> None:
         self.name = name
+        self._metadata = _metadata
+
+    @property
+    def metadata(self) -> MessageMetadata:
+        if self._metadata is None:
+            raise InvalidMessageError("AddUser is unstamped")
+        return self._metadata
+
+    def with_metadata(self, metadata: MessageMetadata) -> "AddUser":
+        return AddUser(self.name, _metadata=metadata)
 
 
 class FlushTrackingStream(StringIO):
@@ -247,7 +260,7 @@ async def test_debug_subscriber_can_be_attached_to_message_bus() -> None:
 
     bus.register_command_handler(AddUser, handler)
 
-    result = await bus.send(AddUser("ada"))
+    result = await bus.send(AddUser("ada", _metadata=new_root_metadata()))
 
     output = stream.getvalue()
     assert result == "ADA"
