@@ -999,7 +999,7 @@ async def test_aclose_stops_background_loop_created_by_sync_bridge() -> None:
         return command.name
 
     bus.register_command_handler(AddUser, handler)
-    assert bus.send_sync(AddUser(name="ada")) == "ada"
+    assert await asyncio.to_thread(bus.send_sync, AddUser(name="ada")) == "ada"
 
     await bus.aclose()
 
@@ -1340,7 +1340,10 @@ async def test_send_sync_from_async_context_raises_usage_error() -> None:
 
     bus.register_command_handler(AddUser, handler)
 
-    with pytest.raises(BusUsageError, match=r"send_sync\(\) cannot run inside an active event loop"):
+    with pytest.raises(
+        BusUsageError,
+        match=r"send_sync\(\) cannot run inside an active event loop",
+    ):
         bus.send_sync(AddUser(name="ada"))
 
 
@@ -1353,7 +1356,10 @@ async def test_publish_sync_from_async_context_raises_usage_error() -> None:
 
     bus.register_event_handler(UserAdded, handler)
 
-    with pytest.raises(BusUsageError, match=r"publish_sync\(\) cannot run inside an active event loop"):
+    with pytest.raises(
+        BusUsageError,
+        match=r"publish_sync\(\) cannot run inside an active event loop",
+    ):
         bus.publish_sync(UserAdded(user_id=1))
 
 
@@ -1390,11 +1396,14 @@ async def test_publish_rejects_sync_event_handler_that_returns_awaitable() -> No
 
     assert len(exc_info.value.failures) == 1
     assert isinstance(exc_info.value.failures[0], BusUsageError)
-    assert str(exc_info.value.failures[0]) == "sync handler returned an awaitable; declare it with async def"
+    assert (
+        str(exc_info.value.failures[0])
+        == "sync handler returned an awaitable; declare it with async def"
+    )
 
 
 @pytest.mark.asyncio
-async def test_subscriber_rejects_sync_callable_that_returns_awaitable_without_failing_dispatch() -> None:
+async def test_subscriber_returning_awaitable_does_not_fail_dispatch() -> None:
     seen: list[str] = []
 
     async def inner(event: object) -> None:
@@ -1520,7 +1529,7 @@ async def test_repeated_aclose_is_harmless() -> None:
         return command.name
 
     bus.register_command_handler(AddUser, handler)
-    assert bus.send_sync(AddUser(name="ada")) == "ada"
+    assert await asyncio.to_thread(bus.send_sync, AddUser(name="ada")) == "ada"
 
     await bus.aclose()
     await bus.aclose()

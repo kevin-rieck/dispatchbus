@@ -253,7 +253,8 @@ class MessageBus:
     def close(self) -> None:
         if self._in_running_loop_thread():
             raise BusUsageError(
-                "close() cannot run inside an active event loop; use await bus.aclose() from async code"
+                "close() cannot run inside an active event loop; "
+                "use await bus.aclose() from async code"
             )
         if self._loop is None:
             asyncio.run(self._drain_and_close_runtime())
