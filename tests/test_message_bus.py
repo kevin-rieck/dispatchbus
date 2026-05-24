@@ -1414,6 +1414,54 @@ async def test_subscriber_rejects_sync_callable_that_returns_awaitable_without_f
     assert seen == []
 
 
+def test_concurrent_send_sync_starts_only_one_background_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bus = MessageBus()
+    starts = 0
+    starts_lock = threading.Lock()
+    entered = threading.Event()
+    release = threading.Event()
+    ready = threading.Barrier(3)
+    original = MessageBus._run_background_loop
+
+    def wrapped(self: MessageBus) -> None:
+        nonlocal starts
+        with starts_lock:
+            starts += 1
+        entered.set()
+        release.wait(timeout=1)
+        return original(self)
+
+    monkeypatch.setattr(MessageBus, "_run_background_loop", wrapped)
+
+    def handler(command: AddUser) -> str:
+        return command.name.upper()
+
+    bus.register_command_handler(AddUser, handler)
+
+    results: list[str] = []
+
+    def worker(name: str) -> None:
+        ready.wait()
+        results.append(bus.send_sync(AddUser(name=name)))
+
+    first = threading.Thread(target=worker, args=("ada",))
+    second = threading.Thread(target=worker, args=("grace",))
+    first.start()
+    second.start()
+    ready.wait()
+    assert entered.wait(timeout=1)
+    release.set()
+    first.join(timeout=1)
+    second.join(timeout=1)
+
+    assert sorted(results) == ["ADA", "GRACE"]
+    assert starts == 1
+
+    bus.close()
+
+
 def test_close_rejects_new_sync_work() -> None:
     bus = MessageBus()
 

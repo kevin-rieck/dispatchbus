@@ -37,6 +37,7 @@ class MessageBus:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._loop_ready = threading.Event()
+        self._loop_start_lock = threading.Lock()
         self._state = _BusState.OPEN
         self._in_flight_dispatches = 0
         self._state_lock = threading.Lock()
@@ -330,9 +331,13 @@ class MessageBus:
     def _ensure_background_loop(self) -> None:
         if self._loop is not None:
             return
-        self._thread = threading.Thread(target=self._run_background_loop, daemon=True)
-        self._thread.start()
-        self._loop_ready.wait()
+        with self._loop_start_lock:
+            if self._loop is not None:
+                return
+            self._loop_ready.clear()
+            self._thread = threading.Thread(target=self._run_background_loop, daemon=True)
+            self._thread.start()
+            self._loop_ready.wait()
 
     def _run_background_loop(self) -> None:
         loop = asyncio.new_event_loop()
