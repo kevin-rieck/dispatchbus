@@ -4,8 +4,9 @@ from datetime import datetime
 from time import perf_counter
 from typing import Any
 
+from dispatchr.command_dispatch import CommandDispatcher
 from dispatchr.event_publisher import EventPublisher
-from dispatchr.exceptions import BusUsageError, EventPublicationError
+from dispatchr.exceptions import BusUsageError
 from dispatchr.lifecycle import BusLifecycle
 from dispatchr.middleware import Middleware, compose_middleware
 from dispatchr.observability import DispatchFinished, DispatchStarted, Subscriber, new_dispatch_id
@@ -34,6 +35,13 @@ class MessageBus:
             middleware=self._middleware,
             subscribers=self._subscribers,
         )
+        self._command_dispatcher = CommandDispatcher(
+            registry=self._registry,
+            runtime=self._runtime,
+            middleware=self._middleware,
+            subscribers=self._subscribers,
+            publish_event=self._event_publisher.publish,
+        )
 
     def register_command_handler(self, message_type: type[Any], handler: Any) -> None:
         self._registry.register_command_handler(message_type, handler)
@@ -52,73 +60,7 @@ class MessageBus:
             await self._lifecycle.leave_dispatch(token)
 
     async def _send_impl(self, command: Any) -> Any:
-        handler = self._registry.get_command_handler(type(command))
-        dispatch_id = new_dispatch_id()
-        started = perf_counter()
-        await self._runtime.notify_subscribers(
-            self._subscribers,
-            DispatchStarted(
-                message=command,
-                message_type=type(command),
-                operation="send",
-                timestamp=datetime.now(),
-                dispatch_id=dispatch_id,
-                handler_count=1,
-            ),
-        )
-
-        async def final_handler(message: Any) -> Any:
-            outcome = await self._runtime.dispatch_command(
-                handler,
-                message,
-                dispatch_id=dispatch_id,
-                subscribers=self._subscribers,
-            )
-            failures: list[Exception] = []
-            for emitted_event in outcome.emitted_events:
-                try:
-                    await self._publish_impl(emitted_event)
-                except EventPublicationError as exc:
-                    failures.extend(exc.failures)
-                except Exception as exc:
-                    failures.append(exc)
-            if failures:
-                raise EventPublicationError(failures)
-            return outcome.result
-
-        pipeline = compose_middleware(self._middleware, final_handler)
-        try:
-            result = await pipeline(command)
-        except Exception:
-            await self._runtime.notify_subscribers(
-                self._subscribers,
-                DispatchFinished(
-                    message=command,
-                    message_type=type(command),
-                    operation="send",
-                    timestamp=datetime.now(),
-                    dispatch_id=dispatch_id,
-                    handler_count=1,
-                    duration_ms=(perf_counter() - started) * 1000,
-                    success=False,
-                ),
-            )
-            raise
-
-        await self._runtime.notify_subscribers(
-            self._subscribers,
-            DispatchFinished(
-                message=command,
-                message_type=type(command),
-                operation="send",
-                timestamp=datetime.now(),
-                dispatch_id=dispatch_id,
-                handler_count=1,
-                duration_ms=(perf_counter() - started) * 1000,
-                success=True,
-            ),
-        )
-        return result
+        return await self._command_dispatcher.send(command)
 
     async def publish(self, event: Any) -> None:
         token = await self._lifecycle.enter_publish()
