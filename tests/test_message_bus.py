@@ -1357,6 +1357,63 @@ async def test_publish_sync_from_async_context_raises_usage_error() -> None:
         bus.publish_sync(UserAdded(user_id=1))
 
 
+@pytest.mark.asyncio
+async def test_send_rejects_sync_command_handler_that_returns_awaitable() -> None:
+    bus = MessageBus()
+
+    async def inner(command: AddUser) -> str:
+        return command.name.upper()
+
+    def handler(command: AddUser):
+        return inner(command)
+
+    bus.register_command_handler(AddUser, handler)
+
+    with pytest.raises(BusUsageError, match="sync handler returned an awaitable"):
+        await bus.send(AddUser(name="ada"))
+
+
+@pytest.mark.asyncio
+async def test_publish_rejects_sync_event_handler_that_returns_awaitable() -> None:
+    bus = MessageBus()
+
+    async def inner(event: UserAdded) -> None:
+        return None
+
+    def handler(event: UserAdded):
+        return inner(event)
+
+    bus.register_event_handler(UserAdded, handler)
+
+    with pytest.raises(EventPublicationError) as exc_info:
+        await bus.publish(UserAdded(user_id=1))
+
+    assert len(exc_info.value.failures) == 1
+    assert isinstance(exc_info.value.failures[0], BusUsageError)
+    assert str(exc_info.value.failures[0]) == "sync handler returned an awaitable; declare it with async def"
+
+
+@pytest.mark.asyncio
+async def test_subscriber_rejects_sync_callable_that_returns_awaitable_without_failing_dispatch() -> None:
+    seen: list[str] = []
+
+    async def inner(event: object) -> None:
+        seen.append(type(event).__name__)
+
+    def subscriber(event: object):
+        return inner(event)
+
+    bus = MessageBus(subscribers=[subscriber])
+
+    async def handler(command: AddUser) -> str:
+        return command.name
+
+    bus.register_command_handler(AddUser, handler)
+
+    assert await bus.send(AddUser(name="ada")) == "ada"
+    assert seen == []
+
+
 def test_close_rejects_new_sync_work() -> None:
     bus = MessageBus()
 

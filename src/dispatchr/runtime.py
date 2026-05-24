@@ -8,7 +8,7 @@ from time import perf_counter
 from typing import Any, Literal
 
 from dispatchr.context import EventContext
-from dispatchr.exceptions import HandlerRegistrationError
+from dispatchr.exceptions import BusUsageError, HandlerRegistrationError
 from dispatchr.observability import (
     HandlerFailed,
     HandlerFinished,
@@ -27,6 +27,14 @@ def _is_async_callable(value: Callable[..., Any]) -> bool:
     return inspect.iscoroutinefunction(value) or (
         callable(value) and inspect.iscoroutinefunction(value.__call__)
     )
+
+
+def _raise_if_sync_callable_returned_awaitable(result: Any, *, kind: str) -> Any:
+    if inspect.isawaitable(result):
+        if inspect.iscoroutine(result):
+            result.close()
+        raise BusUsageError(f"sync {kind} returned an awaitable; declare it with async def")
+    return result
 
 
 @dataclass(frozen=True)
@@ -213,19 +221,23 @@ class MessageRuntime:
             return await handler(message)
         loop = asyncio.get_running_loop()
         if registered_handler.context_style == "keyword":
-            return await loop.run_in_executor(
+            result = await loop.run_in_executor(
                 self._executor,
                 lambda: handler(message, context=context),
             )
+            return _raise_if_sync_callable_returned_awaitable(result, kind="handler")
         if registered_handler.context_style == "positional":
-            return await loop.run_in_executor(self._executor, handler, message, context)
-        return await loop.run_in_executor(self._executor, handler, message)
+            result = await loop.run_in_executor(self._executor, handler, message, context)
+            return _raise_if_sync_callable_returned_awaitable(result, kind="handler")
+        result = await loop.run_in_executor(self._executor, handler, message)
+        return _raise_if_sync_callable_returned_awaitable(result, kind="handler")
 
     async def _call_subscriber(self, subscriber: Subscriber, event: object) -> Any:
         if _is_async_callable(subscriber):
             return await subscriber(event)
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(self._executor, subscriber, event)
+        result = await loop.run_in_executor(self._executor, subscriber, event)
+        return _raise_if_sync_callable_returned_awaitable(result, kind="subscriber")
 
     async def aclose(self) -> None:
         if self._in_flight:

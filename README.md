@@ -67,6 +67,13 @@ bus.register_command_handler(CreateUser, create_user)
 bus.register_event_handler(UserCreated, on_user_created)
 ```
 
+Handlers and subscribers must be either:
+
+- `async def` callables, or
+- synchronous callables that return a final value immediately.
+
+A synchronous callable that returns a coroutine or other awaitable is rejected at runtime.
+
 ## Observability subscribers
 
 ```python
