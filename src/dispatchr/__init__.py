@@ -9,6 +9,14 @@ from dispatchr.exceptions import (
     HandlerRegistrationError,
     NoCommandHandlerError,
 )
+from dispatchr.messages import (
+    CommandBase,
+    EventBase,
+    MessageBase,
+    MessageMetadata,
+    derive_child_metadata,
+    new_root_metadata,
+)
 from dispatchr.observability import (
     DispatchFinished,
     DispatchStarted,
@@ -18,16 +26,22 @@ from dispatchr.observability import (
 )
 
 __all__ = [
+    "CommandBase",
     "DispatchFinished",
     "DispatchStarted",
     "BusUsageError",
     "DispatchrError",
     "DuplicateCommandHandlerError",
+    "EventBase",
     "EventPublicationError",
     "HandlerFailed",
     "HandlerFinished",
     "HandlerRegistrationError",
     "HandlerStarted",
+    "MessageBase",
     "MessageBus",
+    "MessageMetadata",
     "NoCommandHandlerError",
+    "derive_child_metadata",
+    "new_root_metadata",
 ]

@@ -36,17 +36,41 @@ pip install dispatchr
 ```python
 from dataclasses import dataclass
 
-from dispatchr import MessageBus
+from dispatchr import CommandBase, EventBase, MessageBus, MessageMetadata, new_root_metadata
 
 
 @dataclass(frozen=True)
-class CreateUser:
+class CreateUser(CommandBase):
+    message_name = "user.create"
+
     name: str
+    _metadata: MessageMetadata | None = None
+
+    @property
+    def metadata(self) -> MessageMetadata:
+        if self._metadata is None:
+            raise ValueError("CreateUser must be stamped before send()")
+        return self._metadata
+
+    def with_metadata(self, metadata: MessageMetadata) -> "CreateUser":
+        return CreateUser(name=self.name, _metadata=metadata)
 
 
 @dataclass(frozen=True)
-class UserCreated:
+class UserCreated(EventBase):
+    message_name = "user.created"
+
     user_id: int
+    _metadata: MessageMetadata | None = None
+
+    @property
+    def metadata(self) -> MessageMetadata:
+        if self._metadata is None:
+            raise ValueError("UserCreated must be stamped before publish()")
+        return self._metadata
+
+    def with_metadata(self, metadata: MessageMetadata) -> "UserCreated":
+        return UserCreated(user_id=self.user_id, _metadata=metadata)
 
 
 async def create_user(command: CreateUser, context) -> str:
@@ -63,15 +87,20 @@ bus = MessageBus()
 bus.register_command_handler(CreateUser, create_user)
 bus.register_event_handler(UserCreated, on_user_created)
 
-result = await bus.send(CreateUser(name="ada"))
+root_command = CreateUser(name="ada", _metadata=new_root_metadata())
+result = await bus.send(root_command)
 print(result)  # ADA
 ```
+
+`dispatchr` does not depend on Pydantic. If your application uses Pydantic models at the domain boundary, subclass `CommandBase` or `EventBase`, expose a `metadata` property, and implement `with_metadata()` by returning a copied instance with the supplied metadata attached.
 
 ## Core concepts
 
 ### Commands
 
 Commands are sent with `await bus.send(command)`.
+
+Commands must be subclasses of `CommandBase` and root commands must already be stamped with `new_root_metadata()` before they are sent.
 
 - A command must have exactly one registered handler.
 - Registering a second command handler for the same message type raises `DuplicateCommandHandlerError`.
@@ -80,6 +109,8 @@ Commands are sent with `await bus.send(command)`.
 ### Events
 
 Events are published with `await bus.publish(event)`.
+
+Events must be subclasses of `EventBase` and root events must already be stamped with `new_root_metadata()` before they are published. Follow-up events emitted through `context.emit(...)` are stamped automatically by the bus.
 
 - An event may have zero, one, or many handlers.
 - Publishing an event with no handlers is allowed.
@@ -237,6 +268,12 @@ Already-running dispatch can still finish, including nested event publication tr
 The package root currently exports:
 
 - `MessageBus`
+- `MessageBase`
+- `CommandBase`
+- `EventBase`
+- `MessageMetadata`
+- `new_root_metadata`
+- `derive_child_metadata`
 - `DispatchStarted`
 - `DispatchFinished`
 - `HandlerStarted`
