@@ -24,6 +24,7 @@ from dispatchr.observability import (
     handler_name,
 )
 from dispatchr.runtime import EventConcurrency
+from dispatchr.sync_bridge import SyncBridge
 
 
 @dataclass(frozen=True)
@@ -868,6 +869,12 @@ def test_message_bus_uses_lifecycle_collaborator() -> None:
     assert bus._lifecycle is not None
 
 
+def test_message_bus_uses_sync_bridge() -> None:
+    bus = MessageBus()
+
+    assert bus._sync_bridge is not None
+
+
 @pytest.mark.asyncio
 async def test_publish_can_run_handlers_sequentially() -> None:
     bus = MessageBus(event_concurrency="sequential")
@@ -1009,8 +1016,8 @@ async def test_aclose_stops_background_loop_created_by_sync_bridge() -> None:
 
     await bus.aclose()
 
-    assert bus._loop is None
-    assert bus._thread is None
+    assert bus._sync_bridge._loop is None
+    assert bus._sync_bridge._thread is None
 
 
 @pytest.mark.asyncio
@@ -1044,8 +1051,8 @@ async def test_aclose_waits_for_inflight_sync_bridge_work() -> None:
     worker.join(timeout=1)
 
     assert result["value"] == "ADA"
-    assert bus._loop is None
-    assert bus._thread is None
+    assert bus._sync_bridge._loop is None
+    assert bus._sync_bridge._thread is None
 
 
 def test_public_api_exports_bus_draining_error() -> None:
@@ -1438,9 +1445,9 @@ def test_concurrent_send_sync_starts_only_one_background_thread(
     entered = threading.Event()
     release = threading.Event()
     ready = threading.Barrier(3)
-    original = MessageBus._run_background_loop
+    original = SyncBridge._run_background_loop
 
-    def wrapped(self: MessageBus) -> None:
+    def wrapped(self: SyncBridge) -> None:
         nonlocal starts
         with starts_lock:
             starts += 1
@@ -1448,7 +1455,7 @@ def test_concurrent_send_sync_starts_only_one_background_thread(
         release.wait(timeout=1)
         return original(self)
 
-    monkeypatch.setattr(MessageBus, "_run_background_loop", wrapped)
+    monkeypatch.setattr(SyncBridge, "_run_background_loop", wrapped)
 
     def handler(command: AddUser) -> str:
         return command.name.upper()
@@ -1540,8 +1547,8 @@ async def test_repeated_aclose_is_harmless() -> None:
     await bus.aclose()
     await bus.aclose()
 
-    assert bus._loop is None
-    assert bus._thread is None
+    assert bus._sync_bridge._loop is None
+    assert bus._sync_bridge._thread is None
 
 
 def test_repeated_close_is_harmless() -> None:

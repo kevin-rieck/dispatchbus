@@ -13,6 +13,7 @@ from dispatchr.middleware import Middleware, compose_middleware
 from dispatchr.observability import DispatchFinished, DispatchStarted, Subscriber, new_dispatch_id
 from dispatchr.registry import HandlerRegistry
 from dispatchr.runtime import EventConcurrency, MessageRuntime
+from dispatchr.sync_bridge import SyncBridge
 
 
 class MessageBus:
@@ -27,11 +28,8 @@ class MessageBus:
         self._runtime = MessageRuntime(event_concurrency=event_concurrency)
         self._middleware = list(middleware or [])
         self._subscribers = list(subscribers or [])
-        self._loop: asyncio.AbstractEventLoop | None = None
-        self._thread: threading.Thread | None = None
-        self._loop_ready = threading.Event()
-        self._loop_start_lock = threading.Lock()
         self._lifecycle = BusLifecycle()
+        self._sync_bridge = SyncBridge()
 
     def register_command_handler(self, message_type: type[Any], handler: Any) -> None:
         self._registry.register_command_handler(message_type, handler)
@@ -226,14 +224,14 @@ class MessageBus:
             raise BusUsageError(
                 "send_sync() cannot run inside an active event loop; use await bus.send(...)"
             )
-        return self._run_sync(self.send(command), timeout=timeout)
+        return self._sync_bridge.run(self.send(command), timeout=timeout)
 
     def publish_sync(self, event: Any, timeout: float | None = None) -> None:
         if self._in_running_loop_thread():
             raise BusUsageError(
                 "publish_sync() cannot run inside an active event loop; use await bus.publish(...)"
             )
-        self._run_sync(self.publish(event), timeout=timeout)
+        self._sync_bridge.run(self.publish(event), timeout=timeout)
 
     def close(self) -> None:
         if self._in_running_loop_thread():
@@ -241,39 +239,21 @@ class MessageBus:
                 "close() cannot run inside an active event loop; "
                 "use await bus.aclose() from async code"
             )
-        if self._loop is None:
+        if self._sync_bridge._loop is None:
             asyncio.run(self._drain_and_close_runtime())
             return
 
-        future = asyncio.run_coroutine_threadsafe(self._drain_and_close_runtime(), self._loop)
-        future.result()
-        self._loop.call_soon_threadsafe(self._loop.stop)
-        assert self._thread is not None
-        self._thread.join(timeout=1)
-        self._loop = None
-        self._thread = None
-        self._loop_ready.clear()
+        self._sync_bridge.run(self._drain_and_close_runtime())
+        self._sync_bridge.close()
 
     async def aclose(self) -> None:
         await self._drain_and_close_runtime()
-        if self._loop is not None:
-            self._loop.call_soon_threadsafe(self._loop.stop)
-            assert self._thread is not None
-            self._thread.join(timeout=1)
-            self._loop = None
-            self._thread = None
-            self._loop_ready.clear()
+        await self._sync_bridge.aclose()
 
     async def _drain_and_close_runtime(self) -> None:
         await self._lifecycle.begin_close()
         await self._runtime.aclose()
         await self._lifecycle.finish_close()
-
-    def _run_sync(self, coroutine: Any, timeout: float | None = None) -> Any:
-        self._ensure_background_loop()
-        assert self._loop is not None
-        future: Future[Any] = asyncio.run_coroutine_threadsafe(coroutine, self._loop)
-        return future.result(timeout=timeout)
 
     def _in_running_loop_thread(self) -> bool:
         try:
@@ -281,22 +261,3 @@ class MessageBus:
         except RuntimeError:
             return False
         return True
-
-    def _ensure_background_loop(self) -> None:
-        if self._loop is not None:
-            return
-        with self._loop_start_lock:
-            if self._loop is not None:
-                return
-            self._loop_ready.clear()
-            self._thread = threading.Thread(target=self._run_background_loop, daemon=True)
-            self._thread.start()
-            self._loop_ready.wait()
-
-    def _run_background_loop(self) -> None:
-        loop = asyncio.new_event_loop()
-        self._loop = loop
-        asyncio.set_event_loop(loop)
-        self._loop_ready.set()
-        loop.run_forever()
-        loop.close()
