@@ -561,8 +561,7 @@ async def test_original_and_emitted_event_failures_are_both_reported() -> None:
 
 
 @pytest.mark.asyncio
-async def test_original_failures_are_preserved_when_emitted_publish_raises_non_aggregate_error(
-) -> None:
+async def test_original_failures_preserve_when_emitted_publish_raises_error() -> None:
     async def middleware(message, call_next):
         if isinstance(message, UserAdded) and message.user_id == 2:
             raise RuntimeError("mw boom")
@@ -704,8 +703,7 @@ async def test_concurrent_event_handlers_can_interleave_emitted_follow_up_events
 
 
 @pytest.mark.asyncio
-async def test_concurrent_handlers_publish_follow_up_events_without_waiting_for_slower_siblings(
-) -> None:
+async def test_concurrent_handlers_publish_follow_up_events_without_waiting() -> None:
     bus = MessageBus(event_concurrency="concurrent")
     waiting_started = asyncio.Event()
     follow_up_ran = asyncio.Event()
