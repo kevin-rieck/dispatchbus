@@ -264,6 +264,7 @@ Already-running dispatch can still finish, including nested event publication tr
 `dispatchr.outbox` includes protocol-based outbox building blocks:
 
 - `OutboxMessage`
+- `OutboxRetentionPolicy`
 - `OutboxStorage`
 - `MessageSerializer`
 - `EventPublisher`
@@ -275,10 +276,35 @@ If you install the optional sqlite extra, it also exposes:
 
 - `SQLiteOutboxStorage`
 
+SQLite outbox processing uses claim-based polling with **at-least-once delivery** semantics:
+
+- workers claim unpublished rows before publishing them
+- successful publishes set `published_at` and clear `claimed_at`
+- failed publishes release claims for retry
+- stale claims can be reclaimed after the configured timeout
+- duplicate pickup across workers is reduced, but exactly-once delivery is not guaranteed
+
+Published-row eviction is available as an explicit storage API and optional worker automation:
+
+- eviction only applies to rows where `published_at` is not null
+- worker-driven eviction is opt-in and disabled by default
+- when enabled, eviction deletes published rows older than the retention age first
+- an optional count cap then trims the oldest remaining published rows
+- a practical starting point is 30 days of retention, with an optional count cap for high-volume systems
+
+The SQLite table is expected to include:
+
+- `id`
+- `message_type`
+- `payload`
+- `created_at`
+- `claimed_at` (nullable)
+- `published_at` (nullable)
+
 Example:
 
 ```python
-from dispatchr.outbox import JSONSerializer, OutboxProcessor, OutboxWorker
+from dispatchr.outbox import JSONSerializer, OutboxProcessor, OutboxRetentionPolicy, OutboxWorker
 ```
 
 SQLite example:
@@ -286,6 +312,8 @@ SQLite example:
 ```python
 from dispatchr.outbox import SQLiteOutboxStorage
 ```
+
+SQLite operational note: deleting rows does not necessarily shrink the database file immediately. If reclaiming file size matters, use SQLite operational tools such as `VACUUM` or configure auto-vacuum appropriately.
 
 If `aiosqlite` is not installed, importing `dispatchr.outbox` still works, but accessing `SQLiteOutboxStorage` raises an `ImportError` telling you to install `dispatchr[sqlite]`.
 
