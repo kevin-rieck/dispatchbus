@@ -4,13 +4,8 @@ import pytest
 
 from dispatchr.event_publisher import EventPublisher
 from dispatchr.exceptions import EventPublicationError, InvalidMessageError
-from dispatchr.messages import (
-    EventBase,
-    MessageMetadata,
-    as_runtime_message,
-    get_metadata,
-    new_root_metadata,
-)
+from dispatchr.messages import EventBase, MessageMetadata, as_runtime_message, get_metadata, new_root_metadata
+from dispatchr.observability import DispatchStarted
 from dispatchr.registry import HandlerRegistry
 from dispatchr.runtime import EventDispatchOutcome, MessageRuntime
 
@@ -63,8 +58,19 @@ async def test_event_publisher_aggregates_follow_up_failures() -> None:
 async def test_event_publisher_stamps_follow_up_events_from_parent_metadata() -> None:
     registry = HandlerRegistry()
     runtime = MessageRuntime(event_concurrency="sequential")
-    publisher = EventPublisher(registry=registry, runtime=runtime, middleware=[], subscribers=[])
     seen: list[UserAdded] = []
+    observed: list[DispatchStarted] = []
+
+    async def subscriber(event: object) -> None:
+        if isinstance(event, DispatchStarted) and isinstance(event.message, UserAdded):
+            observed.append(event)
+
+    publisher = EventPublisher(
+        registry=registry,
+        runtime=runtime,
+        middleware=[],
+        subscribers=[subscriber],
+    )
 
     async def emitter(event: UserAdded, context) -> None:
         if event.user_id == 1:
@@ -80,16 +86,30 @@ async def test_event_publisher_stamps_follow_up_events_from_parent_metadata() ->
     await publisher.publish(root)
 
     follow_up = next(event for event in seen if event.user_id == 2)
-    assert get_metadata(follow_up).correlation_id == "corr-99"
-    assert get_metadata(follow_up).causation_id == root.metadata.message_id
+    follow_up_started = next(event for event in observed if event.message.user_id == 2)
+    with pytest.raises(ValueError, match="metadata"):
+        get_metadata(follow_up)
+    assert follow_up_started.metadata.correlation_id == "corr-99"
+    assert follow_up_started.metadata.causation_id == root.metadata.message_id
 
 
 @pytest.mark.asyncio
 async def test_event_publisher_stamps_plain_follow_up_events_from_parent_metadata() -> None:
     registry = HandlerRegistry()
     runtime = MessageRuntime(event_concurrency="sequential")
-    publisher = EventPublisher(registry=registry, runtime=runtime, middleware=[], subscribers=[])
     seen: list[PlainUserAdded] = []
+    observed: list[DispatchStarted] = []
+
+    async def subscriber(event: object) -> None:
+        if isinstance(event, DispatchStarted) and isinstance(event.message, PlainUserAdded):
+            observed.append(event)
+
+    publisher = EventPublisher(
+        registry=registry,
+        runtime=runtime,
+        middleware=[],
+        subscribers=[subscriber],
+    )
 
     async def emitter(event: PlainUserAdded, context) -> None:
         if event.user_id == 1:
@@ -105,8 +125,11 @@ async def test_event_publisher_stamps_plain_follow_up_events_from_parent_metadat
     await publisher.publish(root)
 
     follow_up = next(event for event in seen if event.user_id == 2)
-    assert get_metadata(follow_up).correlation_id == get_metadata(root).correlation_id
-    assert get_metadata(follow_up).causation_id == get_metadata(root).message_id
+    follow_up_started = next(event for event in observed if event.message.user_id == 2)
+    with pytest.raises(ValueError, match="metadata"):
+        get_metadata(follow_up)
+    assert follow_up_started.metadata.correlation_id == get_metadata(root).correlation_id
+    assert follow_up_started.metadata.causation_id == get_metadata(root).message_id
 
 
 def test_event_dispatch_outcome_exposes_handler_outcomes_and_failures() -> None:

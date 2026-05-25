@@ -103,7 +103,7 @@ For normal application code, use plain payload models and let `dispatchr` manage
 - advanced code can read metadata with `get_metadata(message)`
 - `MessageMetadata`, `new_root_metadata()`, and `derive_child_metadata()` remain available for explicit integrations
 
-`get_metadata(CreateUser(name="ada"))` raises until that payload has entered `dispatchr` or has been explicitly wrapped. Once dispatched, the same payload object can be inspected with `get_metadata(...)`.
+`get_metadata(CreateUser(name="ada"))` raises for a plain payload object unless you are holding a `RuntimeMessage` or using a legacy/pre-stamped message object. Dispatching a plain payload does not make that original payload object metadata-readable later.
 
 ### Handler lookup
 

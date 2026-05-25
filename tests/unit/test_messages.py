@@ -3,7 +3,6 @@ from datetime import UTC, datetime
 
 import pytest
 
-import dispatchr.messages as messages_module
 from dispatchr import get_metadata
 from dispatchr.messages import (
     CommandBase,
@@ -153,6 +152,16 @@ def test_as_runtime_message_derives_child_metadata() -> None:
     assert wrapped.metadata.causation_id == "parent-1"
 
 
+def test_get_metadata_from_plain_payload_still_raises_after_wrapping() -> None:
+    payload = PlainCreateUser(name="ada")
+
+    wrapped = as_runtime_message(payload)
+
+    assert get_metadata(wrapped) == wrapped.metadata
+    with pytest.raises(ValueError, match="metadata"):
+        get_metadata(payload)
+
+
 def test_legacy_message_reports_is_stamped_and_get_metadata() -> None:
     legacy = CreateUser(name="ada").with_metadata(new_root_metadata())
 
@@ -170,25 +179,3 @@ def test_as_runtime_message_preserves_legacy_payload_identity_and_metadata() -> 
     assert wrapped.payload is legacy
     assert wrapped.metadata.message_id == "msg-123"
     assert wrapped.metadata.correlation_id == "trace-123"
-
-
-def test_get_metadata_ignores_sidecar_entries_for_other_objects(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    payload = PlainCreateUser(name="ada")
-    other_payload = PlainCreateUser(name="grace")
-    metadata = new_root_metadata(message_id="msg-123", correlation_id="corr-123")
-
-    monkeypatch.setattr(
-        messages_module,
-        "_PAYLOAD_METADATA",
-        {
-            id(payload): messages_module._PayloadMetadataEntry(
-                payload=other_payload,
-                metadata=metadata,
-            )
-        },
-    )
-
-    with pytest.raises(ValueError, match="metadata"):
-        get_metadata(payload)

@@ -122,7 +122,7 @@ async def test_send_accepts_legacy_unstamped_root_command() -> None:
 
 
 @pytest.mark.asyncio
-async def test_send_auto_stamps_plain_root_command() -> None:
+async def test_dispatched_plain_payload_does_not_become_metadata_readable() -> None:
     bus = MessageBus()
     seen: list[PlainAddUser] = []
 
@@ -132,14 +132,17 @@ async def test_send_auto_stamps_plain_root_command() -> None:
 
     bus.register_command_handler(PlainAddUser, handler)
 
-    result = await bus.send(PlainAddUser(name="ada"))
+    payload = PlainAddUser(name="ada")
+    result = await bus.send(payload)
 
     assert result == "ADA"
-    assert get_metadata(seen[0]).message_id
+    assert seen == [payload]
+    with pytest.raises(ValueError, match="metadata"):
+        get_metadata(payload)
 
 
 @pytest.mark.asyncio
-async def test_publish_auto_stamps_plain_root_event() -> None:
+async def test_publish_plain_root_event_delivers_payload() -> None:
     bus = MessageBus()
     seen: list[PlainUserAdded] = []
 
@@ -148,6 +151,9 @@ async def test_publish_auto_stamps_plain_root_event() -> None:
 
     bus.register_event_handler(PlainUserAdded, handler)
 
-    await bus.publish(PlainUserAdded(user_id=3))
+    payload = PlainUserAdded(user_id=3)
+    await bus.publish(payload)
 
-    assert get_metadata(seen[0]).message_id
+    assert seen == [payload]
+    with pytest.raises(ValueError, match="metadata"):
+        get_metadata(payload)

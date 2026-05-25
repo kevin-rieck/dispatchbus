@@ -15,15 +15,6 @@ class MessageMetadata:
     timestamp: datetime
 
 
-@dataclass(frozen=True)
-class _PayloadMetadataEntry:
-    payload: object
-    metadata: MessageMetadata
-
-
-_PAYLOAD_METADATA: dict[int, _PayloadMetadataEntry] = {}
-
-
 def new_root_metadata(
     *,
     correlation_id: str | None = None,
@@ -70,15 +61,11 @@ def get_metadata(message: object) -> MessageMetadata:
 
     try:
         metadata = message.metadata  # type: ignore[attr-defined]
-    except Exception:
+    except (AttributeError, InvalidMessageError, NotImplementedError):
         metadata = None
 
     if isinstance(metadata, MessageMetadata):
         return metadata
-
-    runtime_entry = _PAYLOAD_METADATA.get(id(message))
-    if runtime_entry is not None and runtime_entry.payload is message:
-        return runtime_entry.metadata
 
     raise ValueError("Message metadata is unavailable for this object")
 
@@ -95,7 +82,6 @@ def as_runtime_message(
     except ValueError:
         metadata = derive_child_metadata(parent) if parent is not None else new_root_metadata()
 
-    _PAYLOAD_METADATA[id(message)] = _PayloadMetadataEntry(payload=message, metadata=metadata)
     return RuntimeMessage(payload=message, metadata=metadata)
 
 

@@ -107,8 +107,14 @@ async def test_send_legacy_pre_stamped_command_preserves_payload_object_and_meta
 
 @pytest.mark.asyncio
 async def test_send_plain_command_propagates_correlation_and_causation_to_emitted_events() -> None:
-    bus = MessageBus(event_concurrency="sequential")
     seen: list[PlainUserAdded] = []
+    observed: list[DispatchStarted] = []
+
+    async def subscriber(event: object) -> None:
+        if isinstance(event, DispatchStarted) and isinstance(event.message, PlainUserAdded):
+            observed.append(event)
+
+    bus = MessageBus(event_concurrency="sequential", subscribers=[subscriber])
 
     async def command_handler(command: PlainAddUser, context) -> str:
         context.emit(PlainUserAdded(user_id=3))
@@ -124,9 +130,15 @@ async def test_send_plain_command_propagates_correlation_and_causation_to_emitte
     await bus.send(command)
 
     emitted = seen[0]
-    assert get_metadata(emitted).message_id
-    assert get_metadata(emitted).correlation_id == get_metadata(command).correlation_id
-    assert get_metadata(emitted).causation_id == get_metadata(command).message_id
+    emitted_started = observed[0]
+    with pytest.raises(ValueError, match="metadata"):
+        get_metadata(emitted)
+    with pytest.raises(ValueError, match="metadata"):
+        get_metadata(command)
+    assert emitted_started.message is emitted
+    assert emitted_started.metadata.message_id
+    assert emitted_started.metadata.causation_id is not None
+    assert emitted_started.metadata.correlation_id == emitted_started.metadata.causation_id
 
 
 @pytest.mark.asyncio
@@ -153,8 +165,14 @@ async def test_event_context_preserves_pre_stamped_legacy_event_metadata() -> No
 
 @pytest.mark.asyncio
 async def test_send_propagates_correlation_and_causation_to_emitted_events() -> None:
-    bus = MessageBus(event_concurrency="sequential")
     seen: list[EventBase] = []
+    observed: list[DispatchStarted] = []
+
+    async def subscriber(event: object) -> None:
+        if isinstance(event, DispatchStarted):
+            observed.append(event)
+
+    bus = MessageBus(event_concurrency="sequential", subscribers=[subscriber])
 
     @dataclass(frozen=True)
     class AddStampedUser(CommandBase):
@@ -200,8 +218,15 @@ async def test_send_propagates_correlation_and_causation_to_emitted_events() -> 
     assert await bus.send(command) == "ADA"
 
     emitted = seen[0]
-    assert get_metadata(emitted).correlation_id == "trace-1"
-    assert get_metadata(emitted).causation_id == command.metadata.message_id
+    emitted_started = next(
+        event
+        for event in observed
+        if isinstance(event.message, UserStampedAdded) and event.message.user_id == 3
+    )
+    with pytest.raises(ValueError):
+        get_metadata(emitted)
+    assert emitted_started.metadata.correlation_id == "trace-1"
+    assert emitted_started.metadata.causation_id == command.metadata.message_id
 
 
 @pytest.mark.asyncio
@@ -597,7 +622,9 @@ async def test_subscribers_receive_payload_message_and_matching_metadata() -> No
     started = seen[0]
     assert isinstance(started, DispatchStarted)
     assert started.message is command
-    assert started.metadata == get_metadata(command)
+    with pytest.raises(ValueError, match="metadata"):
+        get_metadata(command)
+    assert started.metadata.message_id
 
 
 @pytest.mark.asyncio
