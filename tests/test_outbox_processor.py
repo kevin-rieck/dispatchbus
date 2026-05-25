@@ -1,8 +1,11 @@
-import pytest
-from datetime import datetime
-from dispatchr import EventBase
+import asyncio
 from dataclasses import dataclass
-from dispatchr.outbox import OutboxMessage, OutboxProcessor, JSONSerializer
+from datetime import datetime
+
+import pytest
+
+from dispatchr import EventBase
+from dispatchr.outbox import JSONSerializer, OutboxMessage, OutboxProcessor, OutboxWorker
 
 
 @dataclass(frozen=True)
@@ -20,9 +23,9 @@ class MockStorage:
     async def get_pending_messages(self, batch_size: int):
         return self.messages[:batch_size]
 
-    async def mark_as_published(self, ids: list[str]):
-        self.published.extend(ids)
-        self.messages = [m for m in self.messages if m.id not in ids]
+    async def mark_as_published(self, message_ids: list[str]):
+        self.published.extend(message_ids)
+        self.messages = [m for m in self.messages if m.id not in message_ids]
 
 
 class MockPublisher:
@@ -45,5 +48,69 @@ async def test_outbox_processor():
     assert processed == 1
     assert len(publisher.published) == 1
     assert isinstance(publisher.published[0], DummyEvent)
+    assert storage.published == ["1"]
+    assert len(storage.messages) == 0
+
+
+@pytest.mark.asyncio
+async def test_outbox_processor_empty_batch():
+    storage = MockStorage()
+    storage.messages = []
+    publisher = MockPublisher()
+    serializer = JSONSerializer({"dummy": DummyEvent})
+
+    processor = OutboxProcessor(publisher=publisher, storage=storage, serializer=serializer)
+    processed = await processor.process_batch()
+
+    assert processed == 0
+    assert len(publisher.published) == 0
+    assert len(storage.published) == 0
+
+
+@pytest.mark.asyncio
+async def test_outbox_processor_failure_handling():
+    storage = MockStorage()
+    storage.messages = [
+        OutboxMessage(id="1", message_type="dummy", payload=b"{}", created_at=datetime.now()),
+        OutboxMessage(id="2", message_type="dummy", payload=b"{}", created_at=datetime.now()),
+    ]
+
+    class FailingPublisher:
+        def __init__(self):
+            self.published = []
+
+        async def publish(self, event):
+            if len(self.published) == 0:
+                self.published.append(event)
+                raise Exception("Failed on first message")
+            self.published.append(event)
+
+    publisher = FailingPublisher()
+    serializer = JSONSerializer({"dummy": DummyEvent})
+
+    processor = OutboxProcessor(publisher=publisher, storage=storage, serializer=serializer)
+    processed = await processor.process_batch()
+
+    assert processed == 1
+    assert len(publisher.published) == 2
+    assert storage.published == ["2"]
+    assert len(storage.messages) == 1
+    assert storage.messages[0].id == "1"
+
+
+@pytest.mark.asyncio
+async def test_outbox_worker():
+    storage = MockStorage()
+    publisher = MockPublisher()
+    serializer = JSONSerializer({"dummy": DummyEvent})
+
+    processor = OutboxProcessor(publisher=publisher, storage=storage, serializer=serializer)
+    worker = OutboxWorker(processor=processor, poll_interval=0.1)
+
+    worker.start()
+    await asyncio.sleep(0.2)
+    await worker.stop()
+
+    assert len(publisher.published) == 1
     assert storage.published == ["1"]
     assert len(storage.messages) == 0

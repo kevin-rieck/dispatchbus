@@ -1,8 +1,11 @@
 import asyncio
+import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from dispatchr.outbox import EventPublisher, MessageSerializer, OutboxStorage
+
+logger = logging.getLogger(__name__)
 
 
 class OutboxProcessor:
@@ -23,12 +26,18 @@ class OutboxProcessor:
         if not messages:
             return 0
 
+        published_ids = []
         for msg in messages:
-            event = self.serializer.deserialize(msg.message_type, msg.payload)
-            await self.publisher.publish(event)
+            try:
+                event = self.serializer.deserialize(msg.message_type, msg.payload)
+                await self.publisher.publish(event)
+                published_ids.append(msg.id)
+            except Exception:
+                logger.exception("Failed to process message %s", msg.id)
 
-        await self.storage.mark_as_published([m.id for m in messages])
-        return len(messages)
+        if published_ids:
+            await self.storage.mark_as_published(published_ids)
+        return len(published_ids)
 
 
 class OutboxWorker:
@@ -39,19 +48,28 @@ class OutboxWorker:
         self._stop_event = asyncio.Event()
 
     def start(self) -> None:
+        logger.info("Starting OutboxWorker")
         self._stop_event.clear()
         self._task = asyncio.create_task(self._run_loop())
 
     async def stop(self) -> None:
+        logger.info("Stopping OutboxWorker")
         self._stop_event.set()
         if self._task:
             await self._task
 
     async def _run_loop(self) -> None:
         while not self._stop_event.is_set():
-            processed = await self.processor.process_batch()
-            if processed == 0:
+            try:
+                processed = await self.processor.process_batch()
+                if processed == 0:
+                    try:
+                        await asyncio.wait_for(self._stop_event.wait(), timeout=self.poll_interval)
+                    except TimeoutError:
+                        pass
+            except Exception:
+                logger.exception("OutboxWorker encountered an error during processing")
                 try:
                     await asyncio.wait_for(self._stop_event.wait(), timeout=self.poll_interval)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     pass
