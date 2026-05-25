@@ -15,6 +15,7 @@ from dispatchr.messages import (
     MessageBase,
     MessageMetadata,
     derive_child_metadata,
+    get_metadata,
     new_root_metadata,
 )
 from dispatchr.observability import (
@@ -43,5 +44,6 @@ __all__ = [
     "MessageMetadata",
     "NoCommandHandlerError",
     "derive_child_metadata",
+    "get_metadata",
     "new_root_metadata",
 ]

@@ -1,8 +1,9 @@
 from dataclasses import FrozenInstanceError
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 
+from dispatchr.messages import new_root_metadata
 from dispatchr.observability import (
     DispatchFinished,
     DispatchStarted,
@@ -25,9 +26,11 @@ def test_lifecycle_events_are_frozen_dataclasses() -> None:
     message = object()
     now = datetime.now()
     error = ValueError("boom")
+    metadata = new_root_metadata()
 
     started = DispatchStarted(
         message=message,
+        metadata=metadata,
         message_type=object,
         operation="send",
         timestamp=now,
@@ -36,6 +39,7 @@ def test_lifecycle_events_are_frozen_dataclasses() -> None:
     )
     finished = DispatchFinished(
         message=message,
+        metadata=metadata,
         message_type=object,
         operation="send",
         timestamp=now,
@@ -46,6 +50,7 @@ def test_lifecycle_events_are_frozen_dataclasses() -> None:
     )
     handler_started = HandlerStarted(
         message=message,
+        metadata=metadata,
         message_type=object,
         operation="send",
         timestamp=now,
@@ -55,6 +60,7 @@ def test_lifecycle_events_are_frozen_dataclasses() -> None:
     )
     handler_finished = HandlerFinished(
         message=message,
+        metadata=metadata,
         message_type=object,
         operation="send",
         timestamp=now,
@@ -65,6 +71,7 @@ def test_lifecycle_events_are_frozen_dataclasses() -> None:
     )
     handler_failed = HandlerFailed(
         message=message,
+        metadata=metadata,
         message_type=object,
         operation="send",
         timestamp=now,
@@ -83,3 +90,25 @@ def test_lifecycle_events_are_frozen_dataclasses() -> None:
 
     with pytest.raises(FrozenInstanceError):
         started.dispatch_id = "other"
+
+
+def test_lifecycle_events_expose_message_metadata() -> None:
+    payload = object()
+    metadata = new_root_metadata(
+        message_id="msg-1",
+        correlation_id="corr-1",
+        timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+
+    started = DispatchStarted(
+        message=payload,
+        metadata=metadata,
+        message_type=object,
+        operation="send",
+        timestamp=datetime.now(),
+        dispatch_id="dispatch-1",
+        handler_count=1,
+    )
+
+    assert started.message is payload
+    assert started.metadata.message_id == "msg-1"

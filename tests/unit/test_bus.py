@@ -6,7 +6,13 @@ import pytest
 
 from dispatchr.bus import MessageBus
 from dispatchr.exceptions import BusUsageError, HandlerRegistrationError, InvalidMessageError
-from dispatchr.messages import CommandBase, EventBase, MessageMetadata, new_root_metadata
+from dispatchr.messages import (
+    CommandBase,
+    EventBase,
+    MessageMetadata,
+    get_metadata,
+    new_root_metadata,
+)
 from dispatchr.runtime import EventConcurrency
 
 
@@ -42,6 +48,18 @@ class UserAddedEvent(EventBase):
 
     def with_metadata(self, metadata: MessageMetadata) -> "UserAddedEvent":
         return UserAddedEvent(user_id=self.user_id, _metadata=metadata)
+
+
+@dataclass(frozen=True)
+class PlainAddUser(CommandBase):
+    message_name = "user.add"
+    name: str
+
+
+@dataclass(frozen=True)
+class PlainUserAdded(EventBase):
+    message_name = "user.added"
+    user_id: int
 
 
 def test_message_bus_uses_lifecycle_collaborator() -> None:
@@ -96,9 +114,40 @@ async def test_publish_rejects_command_instances() -> None:
 
 
 @pytest.mark.asyncio
-async def test_send_rejects_unstamped_root_command() -> None:
+async def test_send_accepts_legacy_unstamped_root_command() -> None:
     bus = MessageBus()
     bus.register_command_handler(AddUserCommand, lambda command: command.name)
 
-    with pytest.raises(BusUsageError, match="stamped"):
-        await bus.send(AddUserCommand(name="ada"))
+    assert await bus.send(AddUserCommand(name="ada")) == "ada"
+
+
+@pytest.mark.asyncio
+async def test_send_auto_stamps_plain_root_command() -> None:
+    bus = MessageBus()
+    seen: list[PlainAddUser] = []
+
+    async def handler(command: PlainAddUser) -> str:
+        seen.append(command)
+        return command.name.upper()
+
+    bus.register_command_handler(PlainAddUser, handler)
+
+    result = await bus.send(PlainAddUser(name="ada"))
+
+    assert result == "ADA"
+    assert get_metadata(seen[0]).message_id
+
+
+@pytest.mark.asyncio
+async def test_publish_auto_stamps_plain_root_event() -> None:
+    bus = MessageBus()
+    seen: list[PlainUserAdded] = []
+
+    async def handler(event: PlainUserAdded) -> None:
+        seen.append(event)
+
+    bus.register_event_handler(PlainUserAdded, handler)
+
+    await bus.publish(PlainUserAdded(user_id=3))
+
+    assert get_metadata(seen[0]).message_id

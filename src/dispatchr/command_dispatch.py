@@ -3,6 +3,7 @@ from time import perf_counter
 from typing import Any
 
 from dispatchr.exceptions import EventPublicationError
+from dispatchr.messages import as_runtime_message, message_type_of, payload_of
 from dispatchr.middleware import Middleware, compose_middleware
 from dispatchr.observability import DispatchFinished, DispatchStarted, Subscriber, new_dispatch_id
 from dispatchr.registry import HandlerRegistry
@@ -26,14 +27,18 @@ class CommandDispatcher:
         self._publish_event = publish_event
 
     async def send(self, command: Any) -> Any:
-        handler = self._registry.get_command_handler(type(command))
+        runtime_command = as_runtime_message(command)
+        payload = payload_of(runtime_command)
+        metadata = runtime_command.metadata
+        handler = self._registry.get_command_handler(message_type_of(runtime_command))
         dispatch_id = new_dispatch_id()
         started = perf_counter()
         await self._runtime.notify_subscribers(
             self._subscribers,
             DispatchStarted(
-                message=command,
-                message_type=type(command),
+                message=payload,
+                metadata=metadata,
+                message_type=type(payload),
                 operation="send",
                 timestamp=datetime.now(),
                 dispatch_id=dispatch_id,
@@ -44,7 +49,7 @@ class CommandDispatcher:
         async def final_handler(message: Any) -> Any:
             outcome = await self._runtime.dispatch_command(
                 handler,
-                message,
+                runtime_command,
                 dispatch_id=dispatch_id,
                 subscribers=self._subscribers,
             )
@@ -62,13 +67,14 @@ class CommandDispatcher:
 
         pipeline = compose_middleware(self._middleware, final_handler)
         try:
-            result = await pipeline(command)
+            result = await pipeline(payload)
         except Exception:
             await self._runtime.notify_subscribers(
                 self._subscribers,
                 DispatchFinished(
-                    message=command,
-                    message_type=type(command),
+                    message=payload,
+                    metadata=metadata,
+                    message_type=type(payload),
                     operation="send",
                     timestamp=datetime.now(),
                     dispatch_id=dispatch_id,
@@ -82,8 +88,9 @@ class CommandDispatcher:
         await self._runtime.notify_subscribers(
             self._subscribers,
             DispatchFinished(
-                message=command,
-                message_type=type(command),
+                message=payload,
+                metadata=metadata,
+                message_type=type(payload),
                 operation="send",
                 timestamp=datetime.now(),
                 dispatch_id=dispatch_id,

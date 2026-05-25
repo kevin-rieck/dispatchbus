@@ -1,22 +1,22 @@
 from collections.abc import Sequence
 
 from dispatchr.exceptions import InvalidMessageError
-from dispatchr.messages import EventBase, MessageMetadata, derive_child_metadata
+from dispatchr.messages import EventBase, MessageMetadata, RuntimeMessage, as_runtime_message
 
 
 class EventContext:
     def __init__(self, parent_metadata: MessageMetadata) -> None:
-        self._events: list[EventBase] = []
+        self._events: list[RuntimeMessage] = []
         self._parent_metadata = parent_metadata
 
     def emit(self, event: object) -> None:
-        if not isinstance(event, EventBase):
+        runtime_event = as_runtime_message(event, parent=self._parent_metadata)
+        if not isinstance(runtime_event.payload, EventBase):
             raise InvalidMessageError(
                 f"emit() requires an EventBase instance, got {type(event).__name__}"
             )
-        stamped_event = event.with_metadata(derive_child_metadata(self._parent_metadata))
-        self._events.append(stamped_event)
+        self._events.append(runtime_event)
 
     @property
-    def events(self) -> Sequence[EventBase]:
+    def events(self) -> Sequence[RuntimeMessage]:
         return tuple(self._events)

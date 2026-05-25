@@ -9,6 +9,7 @@ from typing import Any, Literal
 
 from dispatchr.context import EventContext
 from dispatchr.exceptions import BusUsageError, HandlerRegistrationError
+from dispatchr.messages import RuntimeMessage, payload_of
 from dispatchr.observability import (
     HandlerFailed,
     HandlerFinished,
@@ -40,7 +41,7 @@ def _raise_if_sync_callable_returned_awaitable(result: Any, *, kind: str) -> Any
 @dataclass(frozen=True)
 class HandlerOutcome:
     result: Any
-    emitted_events: tuple[object, ...]
+    emitted_events: tuple[RuntimeMessage, ...]
 
 
 @dataclass(frozen=True)
@@ -195,12 +196,15 @@ class MessageRuntime:
         started = perf_counter()
         handler = registered_handler.handler
         name = handler_name(handler)
-        context = EventContext(message.metadata)
+        payload = payload_of(message)
+        metadata = message.metadata
+        context = EventContext(metadata)
         await self.notify_subscribers(
             subscribers,
             HandlerStarted(
-                message=message,
-                message_type=type(message),
+                message=payload,
+                metadata=metadata,
+                message_type=type(payload),
                 operation=operation,
                 timestamp=datetime.now(),
                 dispatch_id=dispatch_id,
@@ -209,13 +213,14 @@ class MessageRuntime:
             ),
         )
         try:
-            result = await self._call_handler(registered_handler, message, context)
+            result = await self._call_handler(registered_handler, payload, context)
         except Exception as exc:
             await self.notify_subscribers(
                 subscribers,
                 HandlerFailed(
-                    message=message,
-                    message_type=type(message),
+                    message=payload,
+                    metadata=metadata,
+                    message_type=type(payload),
                     operation=operation,
                     timestamp=datetime.now(),
                     dispatch_id=dispatch_id,
@@ -230,8 +235,9 @@ class MessageRuntime:
         await self.notify_subscribers(
             subscribers,
             HandlerFinished(
-                message=message,
-                message_type=type(message),
+                message=payload,
+                metadata=metadata,
+                message_type=type(payload),
                 operation=operation,
                 timestamp=datetime.now(),
                 dispatch_id=dispatch_id,

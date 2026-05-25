@@ -12,7 +12,13 @@ from dispatchr.exceptions import (
     EventPublicationError,
     InvalidMessageError,
 )
-from dispatchr.messages import CommandBase, EventBase, MessageMetadata, new_root_metadata
+from dispatchr.messages import (
+    CommandBase,
+    EventBase,
+    MessageMetadata,
+    get_metadata,
+    new_root_metadata,
+)
 from dispatchr.observability import (
     DispatchFinished,
     DispatchStarted,
@@ -57,12 +63,92 @@ class UserAdded(EventBase):
         return UserAdded(user_id=self.user_id, _metadata=metadata)
 
 
+@dataclass(frozen=True)
+class PlainAddUser(CommandBase):
+    message_name = "user.add"
+    name: str
+
+
+@dataclass(frozen=True)
+class PlainUserAdded(EventBase):
+    message_name = "user.added"
+    user_id: int
+
+
 def root_add_user(name: str) -> AddUser:
     return AddUser(name=name, _metadata=new_root_metadata())
 
 
 def root_user_added(user_id: int) -> UserAdded:
     return UserAdded(user_id=user_id, _metadata=new_root_metadata())
+
+
+@pytest.mark.asyncio
+async def test_send_legacy_pre_stamped_command_preserves_payload_object_and_metadata() -> None:
+    bus = MessageBus()
+    seen: list[AddUser] = []
+
+    async def handler(command: AddUser) -> str:
+        seen.append(command)
+        return command.name.upper()
+
+    bus.register_command_handler(AddUser, handler)
+
+    command = AddUser(
+        name="ada",
+        _metadata=new_root_metadata(correlation_id="trace-123", message_id="msg-123"),
+    )
+
+    assert await bus.send(command) == "ADA"
+    assert seen == [command]
+    assert seen[0].metadata.message_id == "msg-123"
+    assert seen[0].metadata.correlation_id == "trace-123"
+
+
+@pytest.mark.asyncio
+async def test_send_plain_command_propagates_correlation_and_causation_to_emitted_events() -> None:
+    bus = MessageBus(event_concurrency="sequential")
+    seen: list[PlainUserAdded] = []
+
+    async def command_handler(command: PlainAddUser, context) -> str:
+        context.emit(PlainUserAdded(user_id=3))
+        return command.name.upper()
+
+    async def event_handler(event: PlainUserAdded) -> None:
+        seen.append(event)
+
+    bus.register_command_handler(PlainAddUser, command_handler)
+    bus.register_event_handler(PlainUserAdded, event_handler)
+
+    command = PlainAddUser(name="ada")
+    await bus.send(command)
+
+    emitted = seen[0]
+    assert get_metadata(emitted).message_id
+    assert get_metadata(emitted).correlation_id == get_metadata(command).correlation_id
+    assert get_metadata(emitted).causation_id == get_metadata(command).message_id
+
+
+@pytest.mark.asyncio
+async def test_event_context_preserves_pre_stamped_legacy_event_metadata() -> None:
+    bus = MessageBus(event_concurrency="sequential")
+    seen: list[UserAdded] = []
+
+    async def command_handler(command: AddUser, context) -> str:
+        context.emit(
+            UserAdded(user_id=3, _metadata=new_root_metadata(correlation_id="legacy-corr"))
+        )
+        return command.name.upper()
+
+    async def event_handler(event: UserAdded) -> None:
+        seen.append(event)
+
+    bus.register_command_handler(AddUser, command_handler)
+    bus.register_event_handler(UserAdded, event_handler)
+
+    await bus.send(AddUser(name="ada", _metadata=new_root_metadata(correlation_id="root-corr")))
+
+    assert seen[0].metadata.correlation_id == "legacy-corr"
 
 
 @pytest.mark.asyncio
@@ -114,8 +200,8 @@ async def test_send_propagates_correlation_and_causation_to_emitted_events() -> 
     assert await bus.send(command) == "ADA"
 
     emitted = seen[0]
-    assert emitted.metadata.correlation_id == "trace-1"
-    assert emitted.metadata.causation_id == command.metadata.message_id
+    assert get_metadata(emitted).correlation_id == "trace-1"
+    assert get_metadata(emitted).causation_id == command.metadata.message_id
 
 
 @pytest.mark.asyncio
@@ -487,6 +573,31 @@ async def test_publish_with_no_subscribers_is_a_no_op() -> None:
     bus = MessageBus()
 
     await bus.publish(root_user_added(user_id=11))
+
+
+@pytest.mark.asyncio
+async def test_subscribers_receive_payload_message_and_matching_metadata() -> None:
+    seen: list[object] = []
+
+    async def subscriber(event: object) -> None:
+        if isinstance(event, DispatchStarted):
+            seen.append(event)
+
+    bus = MessageBus(subscribers=[subscriber])
+
+    async def handler(command: PlainAddUser) -> str:
+        return command.name.upper()
+
+    bus.register_command_handler(PlainAddUser, handler)
+
+    command = PlainAddUser(name="ada")
+    result = await bus.send(command)
+
+    assert result == "ADA"
+    started = seen[0]
+    assert isinstance(started, DispatchStarted)
+    assert started.message is command
+    assert started.metadata == get_metadata(command)
 
 
 @pytest.mark.asyncio

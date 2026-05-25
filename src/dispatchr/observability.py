@@ -4,6 +4,8 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import uuid4
 
+from dispatchr.messages import MessageMetadata
+
 Operation = Literal["send", "publish"]
 Subscriber = Callable[[Any], Any]
 
@@ -21,6 +23,7 @@ def handler_name(handler: Callable[[Any], Any]) -> str:
 @dataclass(frozen=True)
 class DispatchStarted:
     message: Any
+    metadata: MessageMetadata
     message_type: type[Any]
     operation: Operation
     timestamp: datetime
@@ -31,6 +34,7 @@ class DispatchStarted:
 @dataclass(frozen=True)
 class DispatchFinished:
     message: Any
+    metadata: MessageMetadata
     message_type: type[Any]
     operation: Operation
     timestamp: datetime
@@ -43,6 +47,7 @@ class DispatchFinished:
 @dataclass(frozen=True)
 class HandlerStarted:
     message: Any
+    metadata: MessageMetadata
     message_type: type[Any]
     operation: Operation
     timestamp: datetime
@@ -54,6 +59,7 @@ class HandlerStarted:
 @dataclass(frozen=True)
 class HandlerFinished:
     message: Any
+    metadata: MessageMetadata
     message_type: type[Any]
     operation: Operation
     timestamp: datetime
@@ -66,6 +72,7 @@ class HandlerFinished:
 @dataclass(frozen=True)
 class HandlerFailed:
     message: Any
+    metadata: MessageMetadata
     message_type: type[Any]
     operation: Operation
     timestamp: datetime

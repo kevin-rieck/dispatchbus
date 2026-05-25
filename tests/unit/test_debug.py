@@ -60,6 +60,7 @@ class RecordingHandler(logging.Handler):
 def _handler_started() -> HandlerStarted:
     return HandlerStarted(
         message=object(),
+        metadata=new_root_metadata(),
         message_type=object,
         operation="send",
         timestamp=datetime(2026, 1, 1),
@@ -72,6 +73,7 @@ def _handler_started() -> HandlerStarted:
 def _handler_finished() -> HandlerFinished:
     return HandlerFinished(
         message=object(),
+        metadata=new_root_metadata(),
         message_type=object,
         operation="send",
         timestamp=datetime(2026, 1, 1),
@@ -85,6 +87,7 @@ def _handler_finished() -> HandlerFinished:
 def _handler_failed() -> HandlerFailed:
     return HandlerFailed(
         message=object(),
+        metadata=new_root_metadata(),
         message_type=object,
         operation="send",
         timestamp=datetime(2026, 1, 1),
@@ -99,6 +102,7 @@ def _handler_failed() -> HandlerFailed:
 def _dispatch_started() -> DispatchStarted:
     return DispatchStarted(
         message=object(),
+        metadata=new_root_metadata(),
         message_type=object,
         operation="send",
         timestamp=datetime(2026, 1, 1),
@@ -110,6 +114,7 @@ def _dispatch_started() -> DispatchStarted:
 def _dispatch_finished() -> DispatchFinished:
     return DispatchFinished(
         message=object(),
+        metadata=new_root_metadata(),
         message_type=object,
         operation="publish",
         timestamp=datetime(2026, 1, 1),

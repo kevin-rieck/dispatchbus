@@ -27,9 +27,16 @@ def test_public_api_exports_bus_draining_error() -> None:
 
 
 def test_public_api_exports_message_primitives() -> None:
-    from dispatchr import CommandBase, EventBase, MessageMetadata, new_root_metadata
+    from dispatchr import CommandBase, EventBase, MessageMetadata, get_metadata, new_root_metadata
 
     assert CommandBase.__name__ == "CommandBase"
     assert EventBase.__name__ == "EventBase"
     assert MessageMetadata.__name__ == "MessageMetadata"
     assert callable(new_root_metadata)
+    assert callable(get_metadata)
+
+
+def test_public_init_exports_get_metadata() -> None:
+    from dispatchr import get_metadata
+
+    assert callable(get_metadata)

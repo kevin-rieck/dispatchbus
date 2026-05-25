@@ -6,7 +6,7 @@ from dispatchr.command_dispatch import CommandDispatcher
 from dispatchr.event_publisher import EventPublisher
 from dispatchr.exceptions import BusUsageError
 from dispatchr.lifecycle import BusLifecycle
-from dispatchr.messages import CommandBase, EventBase
+from dispatchr.messages import CommandBase, EventBase, as_runtime_message
 from dispatchr.middleware import Middleware
 from dispatchr.observability import Subscriber
 from dispatchr.registry import HandlerRegistry
@@ -55,7 +55,7 @@ class MessageBus:
         self._require_command_instance(command)
         token = await self._lifecycle.enter_send()
         try:
-            return await self._send_impl(command)
+            return await self._send_impl(as_runtime_message(command))
         finally:
             await self._lifecycle.leave_dispatch(token)
 
@@ -66,7 +66,7 @@ class MessageBus:
         self._require_event_instance(event)
         token = await self._lifecycle.enter_publish()
         try:
-            await self._publish_impl(event)
+            await self._publish_impl(as_runtime_message(event))
         finally:
             await self._lifecycle.leave_dispatch(token)
 
@@ -114,20 +114,12 @@ class MessageBus:
             raise BusUsageError(
                 f"send() requires a CommandBase instance, got {type(message).__name__}"
             )
-        try:
-            _ = message.metadata
-        except Exception as exc:
-            raise BusUsageError("send() requires a stamped root command") from exc
 
     def _require_event_instance(self, message: Any) -> None:
         if not isinstance(message, EventBase):
             raise BusUsageError(
                 f"publish() requires an EventBase instance, got {type(message).__name__}"
             )
-        try:
-            _ = message.metadata
-        except Exception as exc:
-            raise BusUsageError("publish() requires a stamped root event") from exc
 
     def _in_running_loop_thread(self) -> bool:
         try:

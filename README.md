@@ -36,41 +36,19 @@ pip install dispatchr
 ```python
 from dataclasses import dataclass
 
-from dispatchr import CommandBase, EventBase, MessageBus, MessageMetadata, new_root_metadata
+from dispatchr import CommandBase, EventBase, MessageBus
 
 
 @dataclass(frozen=True)
 class CreateUser(CommandBase):
     message_name = "user.create"
-
     name: str
-    _metadata: MessageMetadata | None = None
-
-    @property
-    def metadata(self) -> MessageMetadata:
-        if self._metadata is None:
-            raise ValueError("CreateUser must be stamped before send()")
-        return self._metadata
-
-    def with_metadata(self, metadata: MessageMetadata) -> "CreateUser":
-        return CreateUser(name=self.name, _metadata=metadata)
 
 
 @dataclass(frozen=True)
 class UserCreated(EventBase):
     message_name = "user.created"
-
     user_id: int
-    _metadata: MessageMetadata | None = None
-
-    @property
-    def metadata(self) -> MessageMetadata:
-        if self._metadata is None:
-            raise ValueError("UserCreated must be stamped before publish()")
-        return self._metadata
-
-    def with_metadata(self, metadata: MessageMetadata) -> "UserCreated":
-        return UserCreated(user_id=self.user_id, _metadata=metadata)
 
 
 async def create_user(command: CreateUser, context) -> str:
@@ -87,12 +65,11 @@ bus = MessageBus()
 bus.register_command_handler(CreateUser, create_user)
 bus.register_event_handler(UserCreated, on_user_created)
 
-root_command = CreateUser(name="ada", _metadata=new_root_metadata())
-result = await bus.send(root_command)
+result = await bus.send(CreateUser(name="ada"))
 print(result)  # ADA
 ```
 
-`dispatchr` does not depend on Pydantic. If your application uses Pydantic models at the domain boundary, subclass `CommandBase` or `EventBase`, expose a `metadata` property, and implement `with_metadata()` by returning a copied instance with the supplied metadata attached.
+`dispatchr` does not depend on Pydantic. Dataclasses, Pydantic models, attrs classes, and similar payload types can all be used as long as they subclass `CommandBase` or `EventBase`.
 
 ## Core concepts
 
@@ -100,7 +77,7 @@ print(result)  # ADA
 
 Commands are sent with `await bus.send(command)`.
 
-Commands must be subclasses of `CommandBase` and root commands must already be stamped with `new_root_metadata()` before they are sent.
+Commands must be subclasses of `CommandBase`. Root commands are wrapped and stamped automatically when they enter the bus.
 
 - A command must have exactly one registered handler.
 - Registering a second command handler for the same message type raises `DuplicateCommandHandlerError`.
@@ -110,11 +87,23 @@ Commands must be subclasses of `CommandBase` and root commands must already be s
 
 Events are published with `await bus.publish(event)`.
 
-Events must be subclasses of `EventBase` and root events must already be stamped with `new_root_metadata()` before they are published. Follow-up events emitted through `context.emit(...)` are stamped automatically by the bus.
+Events must be subclasses of `EventBase`. Root events are wrapped and stamped automatically when they enter the bus. Follow-up events emitted through `context.emit(...)` inherit correlation and causation automatically.
 
 - An event may have zero, one, or many handlers.
 - Publishing an event with no handlers is allowed.
 - If one or more event handlers fail, `EventPublicationError` is raised and exposes the collected failures.
+
+### Advanced metadata
+
+For normal application code, use plain payload models and let `dispatchr` manage metadata at runtime.
+
+- root commands and events are stamped automatically
+- follow-up events inherit correlation and causation automatically
+- pre-stamped messages are preserved for compatibility and adapter scenarios
+- advanced code can read metadata with `get_metadata(message)`
+- `MessageMetadata`, `new_root_metadata()`, and `derive_child_metadata()` remain available for explicit integrations
+
+`get_metadata(CreateUser(name="ada"))` raises until that payload has entered `dispatchr` or has been explicitly wrapped. Once dispatched, the same payload object can be inspected with `get_metadata(...)`.
 
 ### Handler lookup
 
@@ -134,11 +123,10 @@ A synchronous callable that returns a coroutine or other awaitable is rejected a
 Handlers can optionally accept a `context` argument:
 
 ```python
-async def handle(message, context) -> None:
-    ...
+async def handle(message, context) -> None: ...
 
-async def handle(message, *, context) -> None:
-    ...
+
+async def handle(message, *, context) -> None: ...
 ```
 
 The context lets a handler emit follow-up events:
@@ -274,6 +262,7 @@ The package root currently exports:
 - `MessageMetadata`
 - `new_root_metadata`
 - `derive_child_metadata`
+- `get_metadata`
 - `DispatchStarted`
 - `DispatchFinished`
 - `HandlerStarted`

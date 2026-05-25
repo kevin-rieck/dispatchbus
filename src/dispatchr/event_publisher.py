@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Any
 
 from dispatchr.exceptions import EventPublicationError
+from dispatchr.messages import as_runtime_message, message_type_of, payload_of
 from dispatchr.middleware import Middleware, compose_middleware
 from dispatchr.observability import DispatchFinished, DispatchStarted, Subscriber, new_dispatch_id
 from dispatchr.registry import HandlerRegistry
@@ -25,7 +26,7 @@ class EventPublisher:
         self._subscribers = subscribers
 
     async def publish(self, event: Any) -> None:
-        pending_events = deque([event])
+        pending_events = deque([as_runtime_message(event)])
         failures: list[Exception] = []
 
         while pending_events:
@@ -44,14 +45,18 @@ class EventPublisher:
             raise EventPublicationError(failures)
 
     async def _publish_one_event(self, event: Any) -> tuple[list[Any], list[Exception]]:
-        handlers = self._registry.get_event_handlers(type(event))
+        runtime_event = as_runtime_message(event)
+        payload = payload_of(runtime_event)
+        metadata = runtime_event.metadata
+        handlers = self._registry.get_event_handlers(message_type_of(runtime_event))
         dispatch_id = new_dispatch_id()
         started = asyncio.get_running_loop().time()
         await self._runtime.notify_subscribers(
             self._subscribers,
             DispatchStarted(
-                message=event,
-                message_type=type(event),
+                message=payload,
+                metadata=metadata,
+                message_type=type(payload),
                 operation="publish",
                 timestamp=datetime.now(),
                 dispatch_id=dispatch_id,
@@ -70,7 +75,7 @@ class EventPublisher:
 
             dispatch_outcome = await self._runtime.dispatch_event(
                 handlers,
-                message,
+                runtime_event,
                 dispatch_id=dispatch_id,
                 subscribers=self._subscribers,
                 on_outcome=on_outcome,
@@ -88,13 +93,14 @@ class EventPublisher:
 
         pipeline = compose_middleware(self._middleware, final_handler)
         try:
-            await pipeline(event)
+            await pipeline(payload)
         except Exception:
             await self._runtime.notify_subscribers(
                 self._subscribers,
                 DispatchFinished(
-                    message=event,
-                    message_type=type(event),
+                    message=payload,
+                    metadata=metadata,
+                    message_type=type(payload),
                     operation="publish",
                     timestamp=datetime.now(),
                     dispatch_id=dispatch_id,
@@ -108,8 +114,9 @@ class EventPublisher:
         await self._runtime.notify_subscribers(
             self._subscribers,
             DispatchFinished(
-                message=event,
-                message_type=type(event),
+                message=payload,
+                metadata=metadata,
+                message_type=type(payload),
                 operation="publish",
                 timestamp=datetime.now(),
                 dispatch_id=dispatch_id,

@@ -1,4 +1,4 @@
-from abc import ABC, abstractmethod
+from abc import ABC
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import ClassVar, Self
@@ -13,6 +13,9 @@ class MessageMetadata:
     correlation_id: str
     causation_id: str | None
     timestamp: datetime
+
+
+_PAYLOAD_METADATA: dict[int, MessageMetadata] = {}
 
 
 def new_root_metadata(
@@ -45,24 +48,77 @@ def derive_child_metadata(
     )
 
 
+@dataclass(frozen=True)
+class RuntimeMessage:
+    payload: object
+    metadata: MessageMetadata
+
+    @property
+    def message_type(self) -> type[object]:
+        return type(self.payload)
+
+
+def get_metadata(message: object) -> MessageMetadata:
+    if isinstance(message, RuntimeMessage):
+        return message.metadata
+
+    try:
+        metadata = message.metadata  # type: ignore[attr-defined]
+    except Exception:
+        metadata = None
+
+    if isinstance(metadata, MessageMetadata):
+        return metadata
+
+    runtime_metadata = _PAYLOAD_METADATA.get(id(message))
+    if runtime_metadata is not None:
+        return runtime_metadata
+
+    raise ValueError("Message metadata is unavailable for this object")
+
+
+def as_runtime_message(
+    message: object,
+    parent: MessageMetadata | None = None,
+) -> RuntimeMessage:
+    if isinstance(message, RuntimeMessage):
+        return message
+
+    try:
+        metadata = get_metadata(message)
+    except ValueError:
+        metadata = derive_child_metadata(parent) if parent is not None else new_root_metadata()
+
+    _PAYLOAD_METADATA[id(message)] = metadata
+    return RuntimeMessage(payload=message, metadata=metadata)
+
+
+def payload_of(message: object) -> object:
+    if isinstance(message, RuntimeMessage):
+        return message.payload
+    return message
+
+
+def message_type_of(message: object) -> type[object]:
+    return type(payload_of(message))
+
+
 class MessageBase(ABC):
     message_name: ClassVar[str]
     schema_version: ClassVar[int] = 1
 
     @property
-    @abstractmethod
     def metadata(self) -> MessageMetadata:
         raise NotImplementedError
 
-    @abstractmethod
     def with_metadata(self, metadata: MessageMetadata) -> Self:
         raise NotImplementedError
 
     @property
     def is_stamped(self) -> bool:
         try:
-            _ = self.metadata
-        except InvalidMessageError:
+            get_metadata(self)
+        except (InvalidMessageError, ValueError):
             return False
         return True
 
