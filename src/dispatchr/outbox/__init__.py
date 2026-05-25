@@ -1,41 +1,7 @@
-# ruff: noqa: I001
-from dataclasses import dataclass
-from datetime import datetime
-from typing import Protocol
-
-from dispatchr import MessageBase
-
-
-
-@dataclass
-class OutboxMessage:
-    id: str
-    message_type: str
-    payload: bytes
-    created_at: datetime
-    published_at: datetime | None = None
-
-
-class OutboxStorage(Protocol):
-    async def get_pending_messages(self, batch_size: int) -> list[OutboxMessage]: ...
-
-    async def mark_as_published(self, message_ids: list[str]) -> None: ...
-
-
-class MessageSerializer(Protocol):
-    def serialize(self, message: MessageBase) -> bytes: ...
-
-    def deserialize(self, message_type: str, payload: bytes) -> MessageBase: ...
-
-
-class EventPublisher(Protocol):
-    async def publish(self, event: MessageBase) -> None: ...
-
-
-from .processor import OutboxProcessor, OutboxWorker  # noqa: E402
-from .serializers import JSONSerializer  # noqa: E402
-from .sqlite import SQLiteOutboxStorage  # noqa: E402
-
+from .models import EventPublisher, MessageSerializer, OutboxMessage, OutboxStorage
+from .processor import OutboxProcessor, OutboxWorker
+from .serializers import JSONSerializer
+from .sqlite import SQLiteOutboxStorage
 
 __all__ = [
     "OutboxMessage",

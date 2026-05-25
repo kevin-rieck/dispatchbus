@@ -1,8 +1,8 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
 import aiosqlite
 
-from dispatchr.outbox import OutboxMessage, OutboxStorage
+from dispatchr.outbox.models import OutboxMessage, OutboxStorage
 
 
 class SQLiteOutboxStorage(OutboxStorage):
@@ -41,8 +41,9 @@ class SQLiteOutboxStorage(OutboxStorage):
         placeholders = ",".join("?" for _ in message_ids)
         query = f"""
             UPDATE {self.table_name}
-            SET published_at = CURRENT_TIMESTAMP
+            SET published_at = ?
             WHERE id IN ({placeholders})
         """
-        await self.connection.execute(query, message_ids)
+        params = [datetime.now(UTC).isoformat()] + message_ids
+        await self.connection.execute(query, params)
         await self.connection.commit()

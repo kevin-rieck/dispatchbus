@@ -47,3 +47,13 @@ async def test_sqlite_storage(memory_db):
     # 4. Verify it's no longer pending
     pending_after = await storage.get_pending_messages(batch_size=10)
     assert len(pending_after) == 0
+
+    # 5. Verify published_at is timezone-aware
+    async with memory_db.execute(
+        "SELECT published_at FROM dispatchr_outbox WHERE id = 'msg-1'"
+    ) as cursor:
+        row = await cursor.fetchone()
+        assert row is not None
+        published_at_str = row[0]
+        published_at = datetime.fromisoformat(published_at_str)
+        assert published_at.tzinfo is not None

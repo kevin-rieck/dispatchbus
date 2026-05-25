@@ -3,7 +3,7 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from dispatchr.outbox import EventPublisher, MessageSerializer, OutboxStorage
+    from dispatchr.outbox.models import EventPublisher, MessageSerializer, OutboxStorage
 
 logger = logging.getLogger(__name__)
 
