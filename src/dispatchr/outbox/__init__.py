@@ -4,6 +4,8 @@ from typing import Protocol
 
 from dispatchr import MessageBase
 
+from .serializers import JSONSerializer
+
 
 @dataclass
 class OutboxMessage:
@@ -28,3 +30,12 @@ class MessageSerializer(Protocol):
 
 class EventPublisher(Protocol):
     async def publish(self, event: MessageBase) -> None: ...
+
+
+__all__ = [
+    "OutboxMessage",
+    "OutboxStorage",
+    "MessageSerializer",
+    "EventPublisher",
+    "JSONSerializer",
+]
