@@ -130,3 +130,22 @@ def test_register_event_handler_rejects_non_event_type() -> None:
 
     with pytest.raises(HandlerRegistrationError, match="EventBase"):
         registry.register_event_handler(CreateUser, on_user_created)
+
+
+def test_registers_context_aware_with_default_none() -> None:
+    registry = HandlerRegistry()
+
+    async def handler_pos(event: UserCreated, context=None) -> None:
+        pass
+
+    async def handler_kw(event: UserCreated, *, context=None) -> None:
+        pass
+
+    registry.register_event_handler(UserCreated, handler_pos)
+    registered_pos = registry.get_event_handlers(UserCreated)[0]
+    assert registered_pos.context_style == "positional"
+
+    registry2 = HandlerRegistry()
+    registry2.register_event_handler(UserCreated, handler_kw)
+    registered_kw = registry2.get_event_handlers(UserCreated)[0]
+    assert registered_kw.context_style == "keyword"

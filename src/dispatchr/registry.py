@@ -42,14 +42,14 @@ def _context_style(value: Callable[..., Any]) -> ContextStyle:
     if (
         len(positional) >= 2
         and positional[1].name == "context"
-        and positional[1].default is inspect.Parameter.empty
+        and (positional[1].default is inspect.Parameter.empty or positional[1].default is None)
     ):
         return "positional"
     for parameter in parameters:
         if (
             parameter.kind is inspect.Parameter.KEYWORD_ONLY
             and parameter.name == "context"
-            and parameter.default is inspect.Parameter.empty
+            and (parameter.default is inspect.Parameter.empty or parameter.default is None)
         ):
             return "keyword"
     return "none"

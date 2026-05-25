@@ -157,3 +157,30 @@ async def test_publish_plain_root_event_delivers_payload() -> None:
     assert seen == [payload]
     with pytest.raises(ValueError, match="metadata"):
         get_metadata(payload)
+
+
+@pytest.mark.asyncio
+async def test_async_context_manager() -> None:
+    async with MessageBus() as bus:
+        assert isinstance(bus, MessageBus)
+        assert bus._lifecycle._state.name == "OPEN"
+    assert bus._lifecycle._state.name == "CLOSED"
+
+
+def test_sync_context_manager() -> None:
+    with MessageBus() as bus:
+        assert isinstance(bus, MessageBus)
+        assert bus._lifecycle._state.name == "OPEN"
+    assert bus._lifecycle._state.name == "CLOSED"
+
+
+def test_custom_executor() -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    executor = ThreadPoolExecutor(max_workers=2)
+    bus = MessageBus(executor=executor)
+    assert bus._runtime._executor is executor
+    assert bus._runtime._owns_executor is False
+    bus.close()
+    assert bus._runtime._executor is executor
+    executor.shutdown(wait=True)

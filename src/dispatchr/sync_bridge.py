@@ -10,6 +10,7 @@ class SyncBridge:
         self._thread: threading.Thread | None = None
         self._loop_ready = threading.Event()
         self._loop_start_lock = threading.Lock()
+        self._loop_error: Exception | None = None
 
     def run(self, coroutine: Any, timeout: float | None = None) -> Any:
         self._ensure_background_loop()
@@ -26,6 +27,7 @@ class SyncBridge:
         self._loop = None
         self._thread = None
         self._loop_ready.clear()
+        self._loop_error = None
 
     async def aclose(self) -> None:
         self.close()
@@ -37,14 +39,27 @@ class SyncBridge:
             if self._loop is not None:
                 return
             self._loop_ready.clear()
+            self._loop_error = None
             self._thread = threading.Thread(target=self._run_background_loop, daemon=True)
             self._thread.start()
             self._loop_ready.wait()
+            if self._loop_error is not None:
+                raise RuntimeError("Failed to start background event loop") from self._loop_error
+            if self._loop is None:
+                raise RuntimeError("Background event loop failed to start")
 
     def _run_background_loop(self) -> None:
-        loop = asyncio.new_event_loop()
-        self._loop = loop
-        asyncio.set_event_loop(loop)
+        try:
+            loop = asyncio.new_event_loop()
+            self._loop = loop
+            asyncio.set_event_loop(loop)
+        except Exception as exc:
+            self._loop_error = exc
+            self._loop_ready.set()
+            return
+
         self._loop_ready.set()
-        loop.run_forever()
-        loop.close()
+        try:
+            loop.run_forever()
+        finally:
+            loop.close()

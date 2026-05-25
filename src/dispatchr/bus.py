@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import Sequence
+from concurrent.futures import Executor
 from typing import Any
 
 from dispatchr.command_dispatch import CommandDispatcher
@@ -21,9 +22,10 @@ class MessageBus:
         *,
         event_concurrency: EventConcurrency = "concurrent",
         subscribers: Sequence[Subscriber] | None = None,
+        executor: Executor | None = None,
     ) -> None:
         self._registry = HandlerRegistry()
-        self._runtime = MessageRuntime(event_concurrency=event_concurrency)
+        self._runtime = MessageRuntime(event_concurrency=event_concurrency, executor=executor)
         self._middleware = list(middleware or [])
         self._subscribers = list(subscribers or [])
         self._lifecycle = BusLifecycle()
@@ -41,6 +43,18 @@ class MessageBus:
             subscribers=self._subscribers,
             publish_event=self._event_publisher.publish,
         )
+
+    async def __aenter__(self) -> "MessageBus":
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        await self.aclose()
+
+    def __enter__(self) -> "MessageBus":
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        self.close()
 
     def register_command_handler(self, message_type: type[Any], handler: Any) -> None:
         self._registry.register_command_handler(message_type, handler)

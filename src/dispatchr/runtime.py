@@ -1,5 +1,6 @@
 import asyncio
 import inspect
+import logging
 from collections.abc import Awaitable, Callable, Sequence
 from concurrent.futures import Executor, ThreadPoolExecutor
 from dataclasses import dataclass
@@ -22,6 +23,8 @@ from dispatchr.registry import RegisteredHandler
 
 Handler = Callable[..., Any]
 EventConcurrency = Literal["concurrent", "sequential"]
+
+logger = logging.getLogger("dispatchr")
 
 
 def _is_async_callable(value: Callable[..., Any]) -> bool:
@@ -181,7 +184,14 @@ class MessageRuntime:
         for subscriber in subscribers:
             try:
                 await self._call_subscriber(subscriber, event)
-            except Exception:
+            except Exception as exc:
+                logger.error(
+                    "Error in subscriber %r processing event %r: %s",
+                    subscriber,
+                    event,
+                    exc,
+                    exc_info=True,
+                )
                 continue
 
     async def _call_handler_with_events(

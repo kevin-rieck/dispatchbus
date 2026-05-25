@@ -1771,3 +1771,37 @@ async def test_aclose_allows_follow_up_events_from_accepted_work() -> None:
     assert await send_task == "ada"
     await close_task
     assert seen == ["command:done", "event:3"]
+
+
+@pytest.mark.asyncio
+async def test_sequential_follow_up_execution_no_interleaving() -> None:
+    bus = MessageBus(event_concurrency="sequential")
+    seen: list[str] = []
+
+    async def handler_1(event: UserAdded, context) -> None:
+        if event.user_id != 1:
+            return
+        seen.append("start:1")
+        await asyncio.sleep(0.01)
+        context.emit(UserAdded(user_id=2))
+        seen.append("end:1")
+
+    async def handler_2(event: UserAdded) -> None:
+        if event.user_id != 1:
+            return
+        seen.append("start:2")
+        await asyncio.sleep(0.01)
+        seen.append("end:2")
+
+    async def handler_3(event: UserAdded) -> None:
+        if event.user_id != 2:
+            return
+        seen.append("handler_3")
+
+    bus.register_event_handler(UserAdded, handler_1)
+    bus.register_event_handler(UserAdded, handler_2)
+    bus.register_event_handler(UserAdded, handler_3)
+
+    await bus.publish(root_user_added(user_id=1))
+
+    assert seen == ["start:1", "end:1", "start:2", "end:2", "handler_3"]
