@@ -1,11 +1,10 @@
+# ruff: noqa: I001
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
 from dispatchr import MessageBase
 
-from .serializers import JSONSerializer
-from .processor import OutboxProcessor, OutboxWorker
 
 
 @dataclass
@@ -33,6 +32,11 @@ class EventPublisher(Protocol):
     async def publish(self, event: MessageBase) -> None: ...
 
 
+from .processor import OutboxProcessor, OutboxWorker  # noqa: E402
+from .serializers import JSONSerializer  # noqa: E402
+from .sqlite import SQLiteOutboxStorage  # noqa: E402
+
+
 __all__ = [
     "OutboxMessage",
     "OutboxStorage",
@@ -41,4 +45,5 @@ __all__ = [
     "JSONSerializer",
     "OutboxProcessor",
     "OutboxWorker",
+    "SQLiteOutboxStorage",
 ]
