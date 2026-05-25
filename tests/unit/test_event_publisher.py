@@ -4,7 +4,13 @@ import pytest
 
 from dispatchr.event_publisher import EventPublisher
 from dispatchr.exceptions import EventPublicationError, InvalidMessageError
-from dispatchr.messages import EventBase, MessageMetadata, as_runtime_message, get_metadata, new_root_metadata
+from dispatchr.messages import (
+    EventBase,
+    MessageMetadata,
+    as_runtime_message,
+    get_metadata,
+    new_root_metadata,
+)
 from dispatchr.observability import DispatchStarted
 from dispatchr.registry import HandlerRegistry
 from dispatchr.runtime import EventDispatchOutcome, MessageRuntime
