@@ -1,10 +1,32 @@
+import importlib
+import sys
 from datetime import UTC, datetime
 
 import aiosqlite
 import pytest
 import pytest_asyncio
 
-from dispatchr.outbox.sqlite import SQLiteOutboxStorage
+
+def test_outbox_package_imports_without_sqlite(monkeypatch):
+    monkeypatch.setitem(sys.modules, "aiosqlite", None)
+    sys.modules.pop("dispatchr.outbox", None)
+    sys.modules.pop("dispatchr.outbox.sqlite", None)
+
+    module = importlib.import_module("dispatchr.outbox")
+
+    assert module.OutboxStorage is not None
+    assert module.OutboxMessage is not None
+
+
+def test_sqlite_outbox_storage_gives_actionable_error_without_sqlite(monkeypatch):
+    monkeypatch.setitem(sys.modules, "aiosqlite", None)
+    sys.modules.pop("dispatchr.outbox", None)
+    sys.modules.pop("dispatchr.outbox.sqlite", None)
+
+    module = importlib.import_module("dispatchr.outbox")
+
+    with pytest.raises(ImportError, match=r"pip install dispatchr\[sqlite\]"):
+        _ = module.SQLiteOutboxStorage
 
 
 @pytest_asyncio.fixture
@@ -24,6 +46,8 @@ async def memory_db():
 
 @pytest.mark.asyncio
 async def test_sqlite_storage(memory_db):
+    from dispatchr.outbox.sqlite import SQLiteOutboxStorage
+
     storage = SQLiteOutboxStorage(memory_db)
 
     # 1. Insert a mock message directly
