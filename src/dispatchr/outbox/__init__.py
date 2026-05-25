@@ -5,6 +5,7 @@ from typing import Protocol
 from dispatchr import MessageBase
 
 from .serializers import JSONSerializer
+from .processor import OutboxProcessor, OutboxWorker
 
 
 @dataclass
@@ -38,4 +39,6 @@ __all__ = [
     "MessageSerializer",
     "EventPublisher",
     "JSONSerializer",
+    "OutboxProcessor",
+    "OutboxWorker",
 ]
