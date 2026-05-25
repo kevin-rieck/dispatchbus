@@ -31,6 +31,14 @@ With `pip`:
 pip install dispatchr
 ```
 
+To use the built-in SQLite outbox implementation, install the optional `sqlite` extra:
+
+```powershell
+pip install 'dispatchr[sqlite]'
+```
+
+Without that extra, `dispatchr.outbox` still provides the outbox protocols and helpers for custom implementations, but `SQLiteOutboxStorage` will raise an `ImportError` with install instructions if accessed.
+
 ## Quick start
 
 ```python
@@ -251,6 +259,36 @@ Calling sync bridge methods inside an active event loop raises `BusUsageError`.
 When closing begins, the bus stops accepting new top-level sends and publishes.
 Already-running dispatch can still finish, including nested event publication triggered during that work.
 
+## Outbox support
+
+`dispatchr.outbox` includes protocol-based outbox building blocks:
+
+- `OutboxMessage`
+- `OutboxStorage`
+- `MessageSerializer`
+- `EventPublisher`
+- `JSONSerializer`
+- `OutboxProcessor`
+- `OutboxWorker`
+
+If you install the optional sqlite extra, it also exposes:
+
+- `SQLiteOutboxStorage`
+
+Example:
+
+```python
+from dispatchr.outbox import JSONSerializer, OutboxProcessor, OutboxWorker
+```
+
+SQLite example:
+
+```python
+from dispatchr.outbox import SQLiteOutboxStorage
+```
+
+If `aiosqlite` is not installed, importing `dispatchr.outbox` still works, but accessing `SQLiteOutboxStorage` raises an `ImportError` telling you to install `dispatchr[sqlite]`.
+
 ## Public API
 
 The package root currently exports:
@@ -280,7 +318,8 @@ The package root currently exports:
 `dispatchr` is intentionally small today. Current limitations include:
 
 - in-memory only; no broker, queue, or transport integration
-- no persistence, retries, scheduling, or outbox support
+- no built-in broker or transport integration
+- no retries or scheduling support
 - exact-type handler lookup only; no inheritance-based dispatch
 - one command handler per command type
 - sync handlers and sync subscribers run in a thread pool
