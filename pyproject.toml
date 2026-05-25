@@ -50,3 +50,6 @@ include = ["src"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/dispatchr"]
+
+[project.optional-dependencies]
+sqlite = ["aiosqlite>=0.20.0"]
