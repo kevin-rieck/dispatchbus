@@ -7,3 +7,16 @@ build/
 .ruff_cache/
 .python-version
 .worktrees/
+
+# AI / Agent Local Settings
+.gemini/
+.antigravitycli/
+.cursor/
+.cline/
+.aider*/
+.continue/
+.openhands/
+.roocline/
+.claude/
+.copilot/
+.pi/
