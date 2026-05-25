@@ -180,3 +180,145 @@ async def test_sqlite_storage(memory_db):
         published_at_str = row[1]
         published_at = datetime.fromisoformat(published_at_str)
         assert published_at.tzinfo is not None
+
+
+@pytest.mark.asyncio
+async def test_sqlite_storage_evicts_old_published_rows(memory_db):
+    from dispatchr.outbox import OutboxRetentionPolicy
+    from dispatchr.outbox.sqlite import SQLiteOutboxStorage
+
+    storage = SQLiteOutboxStorage(memory_db)
+    now = datetime.now(UTC)
+    old_published_at = (now - timedelta(days=31)).isoformat()
+    fresh_published_at = (now - timedelta(days=5)).isoformat()
+
+    await memory_db.executemany(
+        """
+        INSERT INTO dispatchr_outbox
+        (id, message_type, payload, created_at, published_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        [
+            ("old", "user.created", b"{}", now.isoformat(), old_published_at),
+            ("fresh", "user.created", b"{}", now.isoformat(), fresh_published_at),
+            ("pending", "user.created", b"{}", now.isoformat(), None),
+        ],
+    )
+    await memory_db.commit()
+
+    deleted = await storage.evict_published_messages(
+        OutboxRetentionPolicy(retention_period=timedelta(days=30))
+    )
+
+    assert deleted == 1
+    async with memory_db.execute("SELECT id FROM dispatchr_outbox ORDER BY id ASC") as cursor:
+        rows = await cursor.fetchall()
+
+    assert [row[0] for row in rows] == ["fresh", "pending"]
+
+
+@pytest.mark.asyncio
+async def test_sqlite_storage_trims_oldest_published_rows_to_max_count(memory_db):
+    from dispatchr.outbox import OutboxRetentionPolicy
+    from dispatchr.outbox.sqlite import SQLiteOutboxStorage
+
+    storage = SQLiteOutboxStorage(memory_db)
+    now = datetime.now(UTC)
+
+    await memory_db.executemany(
+        """
+        INSERT INTO dispatchr_outbox
+        (id, message_type, payload, created_at, published_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                "pub-1",
+                "user.created",
+                b"{}",
+                now.isoformat(),
+                (now - timedelta(days=3)).isoformat(),
+            ),
+            (
+                "pub-2",
+                "user.created",
+                b"{}",
+                now.isoformat(),
+                (now - timedelta(days=2)).isoformat(),
+            ),
+            (
+                "pub-3",
+                "user.created",
+                b"{}",
+                now.isoformat(),
+                (now - timedelta(days=1)).isoformat(),
+            ),
+        ],
+    )
+    await memory_db.commit()
+
+    deleted = await storage.evict_published_messages(
+        OutboxRetentionPolicy(retention_period=timedelta(days=30), max_published_rows=2)
+    )
+
+    assert deleted == 1
+    async with memory_db.execute(
+        "SELECT id FROM dispatchr_outbox ORDER BY published_at ASC"
+    ) as cursor:
+        rows = await cursor.fetchall()
+
+    assert [row[0] for row in rows] == ["pub-2", "pub-3"]
+
+
+@pytest.mark.asyncio
+async def test_sqlite_storage_applies_age_then_count_trimming(memory_db):
+    from dispatchr.outbox import OutboxRetentionPolicy
+    from dispatchr.outbox.sqlite import SQLiteOutboxStorage
+
+    storage = SQLiteOutboxStorage(memory_db)
+    now = datetime.now(UTC)
+
+    await memory_db.executemany(
+        """
+        INSERT INTO dispatchr_outbox
+        (id, message_type, payload, created_at, published_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        [
+            ("old", "user.created", b"{}", now.isoformat(), (now - timedelta(days=45)).isoformat()),
+            (
+                "keep-1",
+                "user.created",
+                b"{}",
+                now.isoformat(),
+                (now - timedelta(days=4)).isoformat(),
+            ),
+            (
+                "keep-2",
+                "user.created",
+                b"{}",
+                now.isoformat(),
+                (now - timedelta(days=3)).isoformat(),
+            ),
+            (
+                "keep-3",
+                "user.created",
+                b"{}",
+                now.isoformat(),
+                (now - timedelta(days=2)).isoformat(),
+            ),
+        ],
+    )
+    await memory_db.commit()
+
+    deleted = await storage.evict_published_messages(
+        OutboxRetentionPolicy(retention_period=timedelta(days=30), max_published_rows=2)
+    )
+
+    assert deleted == 2
+    async with memory_db.execute(
+        "SELECT id FROM dispatchr_outbox ORDER BY published_at ASC"
+    ) as cursor:
+        rows = await cursor.fetchall()
+
+    assert [row[0] for row in rows] == ["keep-2", "keep-3"]

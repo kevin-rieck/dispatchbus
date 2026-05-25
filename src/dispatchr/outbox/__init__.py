@@ -1,6 +1,12 @@
 from typing import TYPE_CHECKING, Any
 
-from .models import EventPublisher, MessageSerializer, OutboxMessage, OutboxStorage
+from .models import (
+    EventPublisher,
+    MessageSerializer,
+    OutboxMessage,
+    OutboxRetentionPolicy,
+    OutboxStorage,
+)
 from .processor import OutboxProcessor, OutboxWorker
 from .serializers import JSONSerializer
 
@@ -9,6 +15,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "OutboxMessage",
+    "OutboxRetentionPolicy",
     "OutboxStorage",
     "MessageSerializer",
     "EventPublisher",

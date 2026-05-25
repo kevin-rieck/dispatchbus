@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 
 import aiosqlite
 
-from dispatchr.outbox.models import OutboxMessage, OutboxStorage
+from dispatchr.outbox.models import OutboxMessage, OutboxRetentionPolicy, OutboxStorage
 
 _SQL_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -122,3 +122,40 @@ class SQLiteOutboxStorage(OutboxStorage):
         """
         await self.connection.execute(query, message_ids)
         await self.connection.commit()
+
+    async def evict_published_messages(self, policy: OutboxRetentionPolicy) -> int:
+        cutoff = (datetime.now(UTC) - policy.retention_period).isoformat()
+        deleted = 0
+
+        await self.connection.execute("BEGIN")
+        try:
+            delete_old_query = f"""
+                DELETE FROM {self.table_name}
+                WHERE published_at IS NOT NULL
+                  AND published_at < ?
+            """
+            cursor = await self.connection.execute(delete_old_query, (cutoff,))
+            deleted += cursor.rowcount
+
+            if policy.max_published_rows is not None:
+                trim_query = f"""
+                    DELETE FROM {self.table_name}
+                    WHERE id IN (
+                        SELECT id
+                        FROM {self.table_name}
+                        WHERE published_at IS NOT NULL
+                        ORDER BY published_at DESC
+                        LIMIT -1 OFFSET ?
+                    )
+                """
+                trim_cursor = await self.connection.execute(
+                    trim_query, (policy.max_published_rows,)
+                )
+                deleted += trim_cursor.rowcount
+
+            await self.connection.commit()
+        except Exception:
+            await self.connection.rollback()
+            raise
+
+        return deleted
