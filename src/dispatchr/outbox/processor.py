@@ -22,21 +22,25 @@ class OutboxProcessor:
         self.batch_size = batch_size
 
     async def process_batch(self) -> int:
-        messages = await self.storage.get_pending_messages(self.batch_size)
+        messages = await self.storage.claim_pending_messages(self.batch_size)
         if not messages:
             return 0
 
         published_ids = []
+        failed_ids = []
         for msg in messages:
             try:
                 event = self.serializer.deserialize(msg.message_type, msg.payload)
                 await self.publisher.publish(event)
                 published_ids.append(msg.id)
             except Exception:
+                failed_ids.append(msg.id)
                 logger.exception("Failed to process message %s", msg.id)
 
         if published_ids:
             await self.storage.mark_as_published(published_ids)
+        if failed_ids:
+            await self.storage.release_claims(failed_ids)
         return len(published_ids)
 
 
@@ -48,6 +52,9 @@ class OutboxWorker:
         self._stop_event = asyncio.Event()
 
     def start(self) -> None:
+        if self._task is not None and not self._task.done():
+            raise RuntimeError("OutboxWorker is already running")
+
         logger.info("Starting OutboxWorker")
         self._stop_event.clear()
         self._task = asyncio.create_task(self._run_loop())

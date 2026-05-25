@@ -16,16 +16,26 @@ class DummyEvent(EventBase):
 class MockStorage:
     def __init__(self):
         self.messages = [
-            OutboxMessage(id="1", message_type="dummy", payload=b"{}", created_at=datetime.now())
+            OutboxMessage(
+                id="1",
+                message_type="dummy",
+                payload=b"{}",
+                created_at=datetime.now(),
+            )
         ]
         self.published = []
+        self.released = []
 
-    async def get_pending_messages(self, batch_size: int):
-        return self.messages[:batch_size]
+    async def claim_pending_messages(self, batch_size: int):
+        claimed = self.messages[:batch_size]
+        self.messages = self.messages[batch_size:]
+        return claimed
 
     async def mark_as_published(self, message_ids: list[str]):
         self.published.extend(message_ids)
-        self.messages = [m for m in self.messages if m.id not in message_ids]
+
+    async def release_claims(self, message_ids: list[str]):
+        self.released.extend(message_ids)
 
 
 class MockPublisher:
@@ -65,6 +75,7 @@ async def test_outbox_processor_empty_batch():
     assert processed == 0
     assert len(publisher.published) == 0
     assert len(storage.published) == 0
+    assert len(storage.released) == 0
 
 
 @pytest.mark.asyncio
@@ -94,8 +105,7 @@ async def test_outbox_processor_failure_handling():
     assert processed == 1
     assert len(publisher.published) == 2
     assert storage.published == ["2"]
-    assert len(storage.messages) == 1
-    assert storage.messages[0].id == "1"
+    assert storage.released == ["1"]
 
 
 @pytest.mark.asyncio
@@ -114,3 +124,19 @@ async def test_outbox_worker():
     assert len(publisher.published) == 1
     assert storage.published == ["1"]
     assert len(storage.messages) == 0
+
+
+@pytest.mark.asyncio
+async def test_outbox_worker_start_raises_if_already_running():
+    storage = MockStorage()
+    publisher = MockPublisher()
+    serializer = JSONSerializer({"dummy": DummyEvent})
+    processor = OutboxProcessor(publisher=publisher, storage=storage, serializer=serializer)
+    worker = OutboxWorker(processor=processor, poll_interval=0.1)
+
+    worker.start()
+    try:
+        with pytest.raises(RuntimeError, match="already running"):
+            worker.start()
+    finally:
+        await worker.stop()
