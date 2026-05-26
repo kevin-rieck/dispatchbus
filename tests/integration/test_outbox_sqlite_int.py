@@ -60,7 +60,10 @@ async def test_sqlite_storage_claims_pending_messages(memory_db):
     now = datetime.now(UTC)
 
     await memory_db.execute(
-        "INSERT INTO dispatchbus_outbox (id, message_type, payload, created_at) VALUES (?, ?, ?, ?)",
+        (
+            "INSERT INTO dispatchbus_outbox "
+            "(id, message_type, payload, created_at) VALUES (?, ?, ?, ?)"
+        ),
         ("msg-1", "user.created", b"{}", now.isoformat()),
     )
     await memory_db.commit()
@@ -87,7 +90,10 @@ async def test_sqlite_storage_does_not_double_claim_across_instances(memory_db):
     now = datetime.now(UTC)
 
     await memory_db.execute(
-        "INSERT INTO dispatchbus_outbox (id, message_type, payload, created_at) VALUES (?, ?, ?, ?)",
+        (
+            "INSERT INTO dispatchbus_outbox "
+            "(id, message_type, payload, created_at) VALUES (?, ?, ?, ?)"
+        ),
         ("msg-1", "user.created", b"{}", now.isoformat()),
     )
     await memory_db.commit()
@@ -128,7 +134,10 @@ async def test_sqlite_storage_release_claims_makes_message_pending_again(memory_
     now = datetime.now(UTC)
 
     await memory_db.execute(
-        "INSERT INTO dispatchbus_outbox (id, message_type, payload, created_at) VALUES (?, ?, ?, ?)",
+        (
+            "INSERT INTO dispatchbus_outbox "
+            "(id, message_type, payload, created_at) VALUES (?, ?, ?, ?)"
+        ),
         ("msg-1", "user.created", b"{}", now.isoformat()),
     )
     await memory_db.commit()
@@ -151,7 +160,10 @@ async def test_sqlite_storage(memory_db):
     # 1. Insert a mock message directly
     now = datetime.now(UTC)
     await memory_db.execute(
-        "INSERT INTO dispatchbus_outbox (id, message_type, payload, created_at) VALUES (?, ?, ?, ?)",
+        (
+            "INSERT INTO dispatchbus_outbox "
+            "(id, message_type, payload, created_at) VALUES (?, ?, ?, ?)"
+        ),
         ("msg-1", "user.created", b"{}", now.isoformat()),
     )
     await memory_db.commit()
