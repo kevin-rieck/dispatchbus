@@ -37,7 +37,7 @@ def __getattr__(name: str) -> Any:
         if exc.name == "aiosqlite":
             raise ImportError(
                 "SQLiteOutboxStorage requires the optional 'sqlite' dependency. "
-                "Install it with: pip install dispatchr[sqlite]"
+                "Install it with: pip install dispatchbus[sqlite]"
             ) from exc
         raise
 

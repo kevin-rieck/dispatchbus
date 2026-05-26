@@ -5,7 +5,7 @@ import sys
 from dataclasses import dataclass
 from typing import Any, Literal, TextIO
 
-from dispatchr.observability import (
+from dispatchbus.observability import (
     DispatchFinished,
     DispatchStarted,
     HandlerFailed,

@@ -1,15 +1,15 @@
-"""Dispatchr package."""
+"""Dispatchbus package."""
 
-from dispatchr.bus import MessageBus
-from dispatchr.exceptions import (
+from dispatchbus.bus import MessageBus
+from dispatchbus.exceptions import (
     BusUsageError,
-    DispatchrError,
+    DispatchbusError,
     DuplicateCommandHandlerError,
     EventPublicationError,
     HandlerRegistrationError,
     NoCommandHandlerError,
 )
-from dispatchr.messages import (
+from dispatchbus.messages import (
     CommandBase,
     EventBase,
     MessageBase,
@@ -18,7 +18,7 @@ from dispatchr.messages import (
     get_metadata,
     new_root_metadata,
 )
-from dispatchr.observability import (
+from dispatchbus.observability import (
     DispatchFinished,
     DispatchStarted,
     HandlerFailed,
@@ -31,7 +31,7 @@ __all__ = [
     "DispatchFinished",
     "DispatchStarted",
     "BusUsageError",
-    "DispatchrError",
+    "DispatchbusError",
     "DuplicateCommandHandlerError",
     "EventBase",
     "EventPublicationError",

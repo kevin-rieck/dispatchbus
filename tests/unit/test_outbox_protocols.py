@@ -1,7 +1,7 @@
 # tests/test_outbox_protocols.py
 from datetime import datetime
 
-from dispatchr.outbox import OutboxMessage
+from dispatchbus.outbox import OutboxMessage
 
 
 def test_outbox_message_creation():

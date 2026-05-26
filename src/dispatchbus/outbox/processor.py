@@ -3,7 +3,7 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from dispatchr.outbox.models import (
+    from dispatchbus.outbox.models import (
         EventPublisher,
         MessageSerializer,
         OutboxRetentionPolicy,

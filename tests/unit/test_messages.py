@@ -3,8 +3,8 @@ from datetime import UTC, datetime
 
 import pytest
 
-from dispatchr import get_metadata
-from dispatchr.messages import (
+from dispatchbus import get_metadata
+from dispatchbus.messages import (
     CommandBase,
     EventBase,
     InvalidMessageError,

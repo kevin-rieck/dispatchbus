@@ -8,10 +8,10 @@ from datetime import datetime
 from time import perf_counter
 from typing import Any, Literal
 
-from dispatchr.context import EventContext
-from dispatchr.exceptions import BusUsageError, HandlerRegistrationError
-from dispatchr.messages import RuntimeMessage, payload_of
-from dispatchr.observability import (
+from dispatchbus.context import EventContext
+from dispatchbus.exceptions import BusUsageError, HandlerRegistrationError
+from dispatchbus.messages import RuntimeMessage, payload_of
+from dispatchbus.observability import (
     HandlerFailed,
     HandlerFinished,
     HandlerStarted,
@@ -19,12 +19,12 @@ from dispatchr.observability import (
     Subscriber,
     handler_name,
 )
-from dispatchr.registry import RegisteredHandler
+from dispatchbus.registry import RegisteredHandler
 
 Handler = Callable[..., Any]
 EventConcurrency = Literal["concurrent", "sequential"]
 
-logger = logging.getLogger("dispatchr")
+logger = logging.getLogger("dispatchbus")
 
 
 def _is_async_callable(value: Callable[..., Any]) -> bool:

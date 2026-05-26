@@ -3,12 +3,12 @@ from collections import deque
 from datetime import datetime
 from typing import Any
 
-from dispatchr.exceptions import EventPublicationError
-from dispatchr.messages import as_runtime_message, message_type_of, payload_of
-from dispatchr.middleware import Middleware, compose_middleware
-from dispatchr.observability import DispatchFinished, DispatchStarted, Subscriber, new_dispatch_id
-from dispatchr.registry import HandlerRegistry
-from dispatchr.runtime import MessageRuntime
+from dispatchbus.exceptions import EventPublicationError
+from dispatchbus.messages import as_runtime_message, message_type_of, payload_of
+from dispatchbus.middleware import Middleware, compose_middleware
+from dispatchbus.observability import DispatchFinished, DispatchStarted, Subscriber, new_dispatch_id
+from dispatchbus.registry import HandlerRegistry
+from dispatchbus.runtime import MessageRuntime
 
 
 class EventPublisher:

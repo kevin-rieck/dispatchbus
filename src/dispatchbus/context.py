@@ -1,7 +1,7 @@
 from collections.abc import Sequence
 
-from dispatchr.exceptions import InvalidMessageError
-from dispatchr.messages import EventBase, MessageMetadata, RuntimeMessage, as_runtime_message
+from dispatchbus.exceptions import InvalidMessageError
+from dispatchbus.messages import EventBase, MessageMetadata, RuntimeMessage, as_runtime_message
 
 
 class EventContext:

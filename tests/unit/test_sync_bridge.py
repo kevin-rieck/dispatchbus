@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from dispatchr.sync_bridge import SyncBridge
+from dispatchbus.sync_bridge import SyncBridge
 
 
 def test_sync_bridge_runs_coroutine() -> None:

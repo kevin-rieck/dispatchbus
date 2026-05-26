@@ -2,18 +2,18 @@ from dataclasses import dataclass
 
 import pytest
 
-from dispatchr.event_publisher import EventPublisher
-from dispatchr.exceptions import EventPublicationError, InvalidMessageError
-from dispatchr.messages import (
+from dispatchbus.event_publisher import EventPublisher
+from dispatchbus.exceptions import EventPublicationError, InvalidMessageError
+from dispatchbus.messages import (
     EventBase,
     MessageMetadata,
     as_runtime_message,
     get_metadata,
     new_root_metadata,
 )
-from dispatchr.observability import DispatchStarted
-from dispatchr.registry import HandlerRegistry
-from dispatchr.runtime import EventDispatchOutcome, MessageRuntime
+from dispatchbus.observability import DispatchStarted
+from dispatchbus.registry import HandlerRegistry
+from dispatchbus.runtime import EventDispatchOutcome, MessageRuntime
 
 
 @dataclass(frozen=True)

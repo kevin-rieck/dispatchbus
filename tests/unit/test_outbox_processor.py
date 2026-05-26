@@ -4,8 +4,8 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from dispatchr import EventBase
-from dispatchr.outbox import JSONSerializer, OutboxMessage, OutboxProcessor, OutboxWorker
+from dispatchbus import EventBase
+from dispatchbus.outbox import JSONSerializer, OutboxMessage, OutboxProcessor, OutboxWorker
 
 
 @dataclass(frozen=True)
@@ -14,7 +14,7 @@ class DummyEvent(EventBase):
 
 
 def test_outbox_retention_policy_is_exported():
-    from dispatchr.outbox import OutboxRetentionPolicy
+    from dispatchbus.outbox import OutboxRetentionPolicy
 
     policy = OutboxRetentionPolicy(retention_period=timedelta(days=30), max_published_rows=500)
 
@@ -32,7 +32,7 @@ def test_outbox_retention_policy_is_exported():
 def test_outbox_retention_policy_rejects_invalid_values(
     retention_period: timedelta, max_published_rows: int | None
 ):
-    from dispatchr.outbox import OutboxRetentionPolicy
+    from dispatchbus.outbox import OutboxRetentionPolicy
 
     with pytest.raises(ValueError):
         OutboxRetentionPolicy(
@@ -42,7 +42,7 @@ def test_outbox_retention_policy_rejects_invalid_values(
 
 @pytest.mark.parametrize("eviction_interval", [0, -0.1])
 def test_outbox_worker_rejects_non_positive_eviction_interval(eviction_interval: float):
-    from dispatchr.outbox import OutboxRetentionPolicy
+    from dispatchbus.outbox import OutboxRetentionPolicy
 
     storage = MockStorage()
     publisher = MockPublisher()
@@ -216,7 +216,7 @@ async def test_outbox_worker_does_not_evict_when_retention_is_disabled():
 
 @pytest.mark.asyncio
 async def test_outbox_worker_runs_eviction_on_configured_interval():
-    from dispatchr.outbox import OutboxRetentionPolicy
+    from dispatchbus.outbox import OutboxRetentionPolicy
 
     storage = MockStorage()
     publisher = MockPublisher()
@@ -242,7 +242,7 @@ async def test_outbox_worker_runs_eviction_on_configured_interval():
 
 @pytest.mark.asyncio
 async def test_outbox_worker_continues_running_when_eviction_fails():
-    from dispatchr.outbox import OutboxRetentionPolicy
+    from dispatchbus.outbox import OutboxRetentionPolicy
 
     storage = MockStorage()
     storage.raise_on_evict = True
@@ -266,7 +266,7 @@ async def test_outbox_worker_continues_running_when_eviction_fails():
 
 @pytest.mark.asyncio
 async def test_outbox_worker_retries_eviction_without_waiting_full_interval_after_failure():
-    from dispatchr.outbox import OutboxRetentionPolicy
+    from dispatchbus.outbox import OutboxRetentionPolicy
 
     storage = MockStorage()
     storage.raise_on_evict = True
@@ -289,7 +289,7 @@ async def test_outbox_worker_retries_eviction_without_waiting_full_interval_afte
 
 @pytest.mark.asyncio
 async def test_outbox_worker_runs_eviction_even_when_processing_fails():
-    from dispatchr.outbox import OutboxRetentionPolicy
+    from dispatchbus.outbox import OutboxRetentionPolicy
 
     storage = FailingClaimStorage()
     publisher = MockPublisher()

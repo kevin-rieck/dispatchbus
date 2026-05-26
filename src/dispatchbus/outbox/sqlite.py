@@ -4,9 +4,9 @@ from uuid import uuid4
 
 import aiosqlite
 
-from dispatchr import MessageBase
-from dispatchr.messages import get_metadata
-from dispatchr.outbox.models import (
+from dispatchbus import MessageBase
+from dispatchbus.messages import get_metadata
+from dispatchbus.outbox.models import (
     MessageSerializer,
     OutboxMessage,
     OutboxRetentionPolicy,
@@ -20,7 +20,7 @@ class SQLiteOutboxStorage(OutboxStorage):
     def __init__(
         self,
         connection: aiosqlite.Connection,
-        table_name: str = "dispatchr_outbox",
+        table_name: str = "dispatchbus_outbox",
         claim_timeout: timedelta = timedelta(minutes=5),
     ):
         if not _SQL_IDENTIFIER_RE.fullmatch(table_name):

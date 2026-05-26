@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Protocol
 
-from dispatchr import MessageBase
+from dispatchbus import MessageBase
 
 
 @dataclass

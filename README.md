@@ -1,6 +1,6 @@
-# dispatchr
+# dispatchbus
 
-`dispatchr` is an in-memory Python message bus for applications that want explicit command and event dispatch without bringing in a framework.
+`dispatchbus` is an in-memory Python message bus for applications that want explicit command and event dispatch without bringing in a framework.
 
 It supports:
 
@@ -22,29 +22,29 @@ It supports:
 With `uv`:
 
 ```powershell
-uv add dispatchr
+uv add dispatchbus
 ```
 
 With `pip`:
 
 ```powershell
-pip install dispatchr
+pip install dispatchbus
 ```
 
 To use the built-in SQLite outbox implementation, install the optional `sqlite` extra:
 
 ```powershell
-pip install 'dispatchr[sqlite]'
+pip install 'dispatchbus[sqlite]'
 ```
 
-Without that extra, `dispatchr.outbox` still provides the outbox protocols and helpers for custom implementations, but `SQLiteOutboxStorage` will raise an `ImportError` with install instructions if accessed.
+Without that extra, `dispatchbus.outbox` still provides the outbox protocols and helpers for custom implementations, but `SQLiteOutboxStorage` will raise an `ImportError` with install instructions if accessed.
 
 ## Quick start
 
 ```python
 from dataclasses import dataclass
 
-from dispatchr import CommandBase, EventBase, MessageBus
+from dispatchbus import CommandBase, EventBase, MessageBus
 
 
 @dataclass(frozen=True)
@@ -77,7 +77,7 @@ result = await bus.send(CreateUser(name="ada"))
 print(result)  # ADA
 ```
 
-`dispatchr` does not depend on Pydantic. Dataclasses, Pydantic models, attrs classes, and similar payload types can all be used as long as they subclass `CommandBase` or `EventBase`.
+`dispatchbus` does not depend on Pydantic. Dataclasses, Pydantic models, attrs classes, and similar payload types can all be used as long as they subclass `CommandBase` or `EventBase`.
 
 ## Core concepts
 
@@ -103,7 +103,7 @@ Events must be subclasses of `EventBase`. Root events are wrapped and stamped au
 
 ### Advanced metadata
 
-For normal application code, use plain payload models and let `dispatchr` manage metadata at runtime.
+For normal application code, use plain payload models and let `dispatchbus` manage metadata at runtime.
 
 - root commands and events are stamped automatically
 - follow-up events inherit correlation and causation automatically
@@ -195,7 +195,7 @@ Subscribers can observe dispatch lifecycle events emitted by the bus:
 - `HandlerFailed`
 
 ```python
-from dispatchr import DispatchFinished, DispatchStarted, HandlerFailed, MessageBus
+from dispatchbus import DispatchFinished, DispatchStarted, HandlerFailed, MessageBus
 
 
 async def audit(event: object) -> None:
@@ -215,7 +215,7 @@ Subscribers are isolated from dispatch: subscriber exceptions are ignored.
 
 ## Debug subscribers
 
-`dispatchr.debug` includes ready-made subscribers for development-time logging:
+`dispatchbus.debug` includes ready-made subscribers for development-time logging:
 
 - `DebugSubscriber.human(...)`
 - `DebugSubscriber.key_value(...)`
@@ -223,8 +223,8 @@ Subscribers are isolated from dispatch: subscriber exceptions are ignored.
 - `debug_subscriber_key_value(...)`
 
 ```python
-from dispatchr import MessageBus
-from dispatchr.debug import DebugSubscriber
+from dispatchbus import MessageBus
+from dispatchbus.debug import DebugSubscriber
 
 
 bus = MessageBus(
@@ -261,7 +261,7 @@ Already-running dispatch can still finish, including nested event publication tr
 
 ## Outbox support
 
-`dispatchr.outbox` includes protocol-based outbox building blocks:
+`dispatchbus.outbox` includes protocol-based outbox building blocks:
 
 - `OutboxMessage`
 - `OutboxRetentionPolicy`
@@ -304,13 +304,13 @@ The SQLite table is expected to include:
 Example:
 
 ```python
-from dispatchr.outbox import JSONSerializer, OutboxProcessor, OutboxRetentionPolicy, OutboxWorker
+from dispatchbus.outbox import JSONSerializer, OutboxProcessor, OutboxRetentionPolicy, OutboxWorker
 ```
 
 SQLite example:
 
 ```python
-from dispatchr.outbox import SQLiteOutboxStorage
+from dispatchbus.outbox import SQLiteOutboxStorage
 ```
 
 ### Ensuring atomicity
@@ -342,7 +342,7 @@ async def handle_request(payload: dict) -> None:
 
 SQLite operational note: deleting rows does not necessarily shrink the database file immediately. If reclaiming file size matters, use SQLite operational tools such as `VACUUM` or configure auto-vacuum appropriately.
 
-If `aiosqlite` is not installed, importing `dispatchr.outbox` still works, but accessing `SQLiteOutboxStorage` raises an `ImportError` telling you to install `dispatchr[sqlite]`.
+If `aiosqlite` is not installed, importing `dispatchbus.outbox` still works, but accessing `SQLiteOutboxStorage` raises an `ImportError` telling you to install `dispatchbus[sqlite]`.
 
 ## Public API
 
@@ -361,7 +361,7 @@ The package root currently exports:
 - `HandlerStarted`
 - `HandlerFinished`
 - `HandlerFailed`
-- `DispatchrError`
+- `DispatchbusError`
 - `HandlerRegistrationError`
 - `DuplicateCommandHandlerError`
 - `NoCommandHandlerError`
@@ -370,7 +370,7 @@ The package root currently exports:
 
 ## Current limitations
 
-`dispatchr` is intentionally small today. Current limitations include:
+`dispatchbus` is intentionally small today. Current limitations include:
 
 - in-memory only; no broker, queue, or transport integration
 - no built-in broker or transport integration
@@ -380,7 +380,7 @@ The package root currently exports:
 - sync handlers and sync subscribers run in a thread pool
 - long-running blocking sync work can reduce throughput
 - event ordering guarantees depend on the selected concurrency mode
-- the `dispatchr` CLI entry point is currently just a placeholder
+- the `dispatchbus` CLI entry point is currently just a placeholder
 
 ## Development
 

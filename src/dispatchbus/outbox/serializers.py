@@ -3,12 +3,12 @@ from collections.abc import Mapping
 from dataclasses import asdict
 from typing import Any, cast
 
-from dispatchr import MessageBase
+from dispatchbus import MessageBase
 
 
 class JSONSerializer:
     """
-    A naive JSON serializer for dispatchr messages.
+    A naive JSON serializer for dispatchbus messages.
 
     This serializer converts fields to primitive JSON types using Python's built-in `json` module,
     falling back to string representation (`str()`) for complex types like `datetime` or `UUID`.

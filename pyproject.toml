@@ -3,9 +3,9 @@ requires = ["hatchling>=1.25.0"]
 build-backend = "hatchling.build"
 
 [project]
-name = "dispatchr"
+name = "dispatchbus"
 version = "0.1.0"
-description = "Dispatchr Python project."
+description = "Dispatchbus Python project."
 readme = "README.md"
 requires-python = ">=3.12"
 authors = [
@@ -21,12 +21,12 @@ classifiers = [
 dependencies = []
 
 [project.urls]
-Homepage = "https://github.com/kevin-rieck/dispatchr"
-Repository = "https://github.com/kevin-rieck/dispatchr.git"
-Issues = "https://github.com/kevin-rieck/dispatchr/issues"
+Homepage = "https://github.com/kevin-rieck/dispatchbus"
+Repository = "https://github.com/kevin-rieck/dispatchbus.git"
+Issues = "https://github.com/kevin-rieck/dispatchbus/issues"
 
 [project.scripts]
-dispatchr = "dispatchr.__main__:main"
+dispatchbus = "dispatchbus.__main__:main"
 
 [dependency-groups]
 dev = [
@@ -61,7 +61,7 @@ pythonVersion = "3.12"
 include = ["src"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/dispatchr"]
+packages = ["src/dispatchbus"]
 
 [project.optional-dependencies]
 sqlite = ["aiosqlite>=0.20.0"]

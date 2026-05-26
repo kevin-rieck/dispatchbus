@@ -2,14 +2,14 @@ from dataclasses import dataclass
 
 import pytest
 
-from dispatchr.exceptions import (
+from dispatchbus.exceptions import (
     DuplicateCommandHandlerError,
     HandlerRegistrationError,
     InvalidMessageError,
     NoCommandHandlerError,
 )
-from dispatchr.messages import CommandBase, EventBase, MessageMetadata
-from dispatchr.registry import HandlerRegistry
+from dispatchbus.messages import CommandBase, EventBase, MessageMetadata
+from dispatchbus.registry import HandlerRegistry
 
 
 @dataclass(frozen=True)

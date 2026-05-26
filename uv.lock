@@ -21,7 +21,7 @@ wheels = [
 ]
 
 [[package]]
-name = "dispatchr"
+name = "dispatchbus"
 version = "0.1.0"
 source = { editable = "." }
 

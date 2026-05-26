@@ -9,10 +9,10 @@ import pytest_asyncio
 
 def test_outbox_package_imports_without_sqlite(monkeypatch):
     monkeypatch.setitem(sys.modules, "aiosqlite", None)
-    sys.modules.pop("dispatchr.outbox", None)
-    sys.modules.pop("dispatchr.outbox.sqlite", None)
+    sys.modules.pop("dispatchbus.outbox", None)
+    sys.modules.pop("dispatchbus.outbox.sqlite", None)
 
-    module = importlib.import_module("dispatchr.outbox")
+    module = importlib.import_module("dispatchbus.outbox")
 
     assert module.OutboxStorage is not None
     assert module.OutboxMessage is not None
@@ -20,12 +20,12 @@ def test_outbox_package_imports_without_sqlite(monkeypatch):
 
 def test_sqlite_outbox_storage_gives_actionable_error_without_sqlite(monkeypatch):
     monkeypatch.setitem(sys.modules, "aiosqlite", None)
-    sys.modules.pop("dispatchr.outbox", None)
-    sys.modules.pop("dispatchr.outbox.sqlite", None)
+    sys.modules.pop("dispatchbus.outbox", None)
+    sys.modules.pop("dispatchbus.outbox.sqlite", None)
 
-    module = importlib.import_module("dispatchr.outbox")
+    module = importlib.import_module("dispatchbus.outbox")
 
-    with pytest.raises(ImportError, match=r"pip install dispatchr\[sqlite\]"):
+    with pytest.raises(ImportError, match=r"pip install dispatchbus\[sqlite\]"):
         _ = module.SQLiteOutboxStorage
 
 
@@ -33,7 +33,7 @@ def test_sqlite_outbox_storage_gives_actionable_error_without_sqlite(monkeypatch
 async def memory_db():
     async with aiosqlite.connect(":memory:") as db:
         await db.execute("""
-            CREATE TABLE dispatchr_outbox (
+            CREATE TABLE dispatchbus_outbox (
                 id TEXT PRIMARY KEY,
                 message_type TEXT NOT NULL,
                 payload BLOB NOT NULL,
@@ -46,21 +46,21 @@ async def memory_db():
 
 
 def test_sqlite_storage_rejects_invalid_table_name(memory_db):
-    from dispatchr.outbox.sqlite import SQLiteOutboxStorage
+    from dispatchbus.outbox.sqlite import SQLiteOutboxStorage
 
     with pytest.raises(ValueError, match="table_name"):
-        SQLiteOutboxStorage(memory_db, table_name="dispatchr_outbox; DROP TABLE x")
+        SQLiteOutboxStorage(memory_db, table_name="dispatchbus_outbox; DROP TABLE x")
 
 
 @pytest.mark.asyncio
 async def test_sqlite_storage_claims_pending_messages(memory_db):
-    from dispatchr.outbox.sqlite import SQLiteOutboxStorage
+    from dispatchbus.outbox.sqlite import SQLiteOutboxStorage
 
     storage = SQLiteOutboxStorage(memory_db)
     now = datetime.now(UTC)
 
     await memory_db.execute(
-        "INSERT INTO dispatchr_outbox (id, message_type, payload, created_at) VALUES (?, ?, ?, ?)",
+        "INSERT INTO dispatchbus_outbox (id, message_type, payload, created_at) VALUES (?, ?, ?, ?)",
         ("msg-1", "user.created", b"{}", now.isoformat()),
     )
     await memory_db.commit()
@@ -69,7 +69,7 @@ async def test_sqlite_storage_claims_pending_messages(memory_db):
 
     assert [msg.id for msg in pending] == ["msg-1"]
     async with memory_db.execute(
-        "SELECT claimed_at, published_at FROM dispatchr_outbox WHERE id = 'msg-1'"
+        "SELECT claimed_at, published_at FROM dispatchbus_outbox WHERE id = 'msg-1'"
     ) as cursor:
         row = await cursor.fetchone()
 
@@ -80,14 +80,14 @@ async def test_sqlite_storage_claims_pending_messages(memory_db):
 
 @pytest.mark.asyncio
 async def test_sqlite_storage_does_not_double_claim_across_instances(memory_db):
-    from dispatchr.outbox.sqlite import SQLiteOutboxStorage
+    from dispatchbus.outbox.sqlite import SQLiteOutboxStorage
 
     storage1 = SQLiteOutboxStorage(memory_db)
     storage2 = SQLiteOutboxStorage(memory_db)
     now = datetime.now(UTC)
 
     await memory_db.execute(
-        "INSERT INTO dispatchr_outbox (id, message_type, payload, created_at) VALUES (?, ?, ?, ?)",
+        "INSERT INTO dispatchbus_outbox (id, message_type, payload, created_at) VALUES (?, ?, ?, ?)",
         ("msg-1", "user.created", b"{}", now.isoformat()),
     )
     await memory_db.commit()
@@ -101,14 +101,14 @@ async def test_sqlite_storage_does_not_double_claim_across_instances(memory_db):
 
 @pytest.mark.asyncio
 async def test_sqlite_storage_reclaims_stale_claims(memory_db):
-    from dispatchr.outbox.sqlite import SQLiteOutboxStorage
+    from dispatchbus.outbox.sqlite import SQLiteOutboxStorage
 
     storage = SQLiteOutboxStorage(memory_db, claim_timeout=timedelta(seconds=0))
     now = datetime.now(UTC)
 
     await memory_db.execute(
         (
-            "INSERT INTO dispatchr_outbox "
+            "INSERT INTO dispatchbus_outbox "
             "(id, message_type, payload, created_at, claimed_at) VALUES (?, ?, ?, ?, ?)"
         ),
         ("msg-1", "user.created", b"{}", now.isoformat(), now.isoformat()),
@@ -122,13 +122,13 @@ async def test_sqlite_storage_reclaims_stale_claims(memory_db):
 
 @pytest.mark.asyncio
 async def test_sqlite_storage_release_claims_makes_message_pending_again(memory_db):
-    from dispatchr.outbox.sqlite import SQLiteOutboxStorage
+    from dispatchbus.outbox.sqlite import SQLiteOutboxStorage
 
     storage = SQLiteOutboxStorage(memory_db)
     now = datetime.now(UTC)
 
     await memory_db.execute(
-        "INSERT INTO dispatchr_outbox (id, message_type, payload, created_at) VALUES (?, ?, ?, ?)",
+        "INSERT INTO dispatchbus_outbox (id, message_type, payload, created_at) VALUES (?, ?, ?, ?)",
         ("msg-1", "user.created", b"{}", now.isoformat()),
     )
     await memory_db.commit()
@@ -144,14 +144,14 @@ async def test_sqlite_storage_release_claims_makes_message_pending_again(memory_
 
 @pytest.mark.asyncio
 async def test_sqlite_storage(memory_db):
-    from dispatchr.outbox.sqlite import SQLiteOutboxStorage
+    from dispatchbus.outbox.sqlite import SQLiteOutboxStorage
 
     storage = SQLiteOutboxStorage(memory_db)
 
     # 1. Insert a mock message directly
     now = datetime.now(UTC)
     await memory_db.execute(
-        "INSERT INTO dispatchr_outbox (id, message_type, payload, created_at) VALUES (?, ?, ?, ?)",
+        "INSERT INTO dispatchbus_outbox (id, message_type, payload, created_at) VALUES (?, ?, ?, ?)",
         ("msg-1", "user.created", b"{}", now.isoformat()),
     )
     await memory_db.commit()
@@ -172,7 +172,7 @@ async def test_sqlite_storage(memory_db):
 
     # 5. Verify claimed_at is cleared and published_at is timezone-aware
     async with memory_db.execute(
-        "SELECT claimed_at, published_at FROM dispatchr_outbox WHERE id = 'msg-1'"
+        "SELECT claimed_at, published_at FROM dispatchbus_outbox WHERE id = 'msg-1'"
     ) as cursor:
         row = await cursor.fetchone()
         assert row is not None
@@ -184,8 +184,8 @@ async def test_sqlite_storage(memory_db):
 
 @pytest.mark.asyncio
 async def test_sqlite_storage_evicts_old_published_rows(memory_db):
-    from dispatchr.outbox import OutboxRetentionPolicy
-    from dispatchr.outbox.sqlite import SQLiteOutboxStorage
+    from dispatchbus.outbox import OutboxRetentionPolicy
+    from dispatchbus.outbox.sqlite import SQLiteOutboxStorage
 
     storage = SQLiteOutboxStorage(memory_db)
     now = datetime.now(UTC)
@@ -194,7 +194,7 @@ async def test_sqlite_storage_evicts_old_published_rows(memory_db):
 
     await memory_db.executemany(
         """
-        INSERT INTO dispatchr_outbox
+        INSERT INTO dispatchbus_outbox
         (id, message_type, payload, created_at, published_at)
         VALUES (?, ?, ?, ?, ?)
         """,
@@ -211,7 +211,7 @@ async def test_sqlite_storage_evicts_old_published_rows(memory_db):
     )
 
     assert deleted == 1
-    async with memory_db.execute("SELECT id FROM dispatchr_outbox ORDER BY id ASC") as cursor:
+    async with memory_db.execute("SELECT id FROM dispatchbus_outbox ORDER BY id ASC") as cursor:
         rows = await cursor.fetchall()
 
     assert [row[0] for row in rows] == ["fresh", "pending"]
@@ -219,15 +219,15 @@ async def test_sqlite_storage_evicts_old_published_rows(memory_db):
 
 @pytest.mark.asyncio
 async def test_sqlite_storage_trims_oldest_published_rows_to_max_count(memory_db):
-    from dispatchr.outbox import OutboxRetentionPolicy
-    from dispatchr.outbox.sqlite import SQLiteOutboxStorage
+    from dispatchbus.outbox import OutboxRetentionPolicy
+    from dispatchbus.outbox.sqlite import SQLiteOutboxStorage
 
     storage = SQLiteOutboxStorage(memory_db)
     now = datetime.now(UTC)
 
     await memory_db.executemany(
         """
-        INSERT INTO dispatchr_outbox
+        INSERT INTO dispatchbus_outbox
         (id, message_type, payload, created_at, published_at)
         VALUES (?, ?, ?, ?, ?)
         """,
@@ -263,7 +263,7 @@ async def test_sqlite_storage_trims_oldest_published_rows_to_max_count(memory_db
 
     assert deleted == 1
     async with memory_db.execute(
-        "SELECT id FROM dispatchr_outbox ORDER BY published_at ASC"
+        "SELECT id FROM dispatchbus_outbox ORDER BY published_at ASC"
     ) as cursor:
         rows = await cursor.fetchall()
 
@@ -272,15 +272,15 @@ async def test_sqlite_storage_trims_oldest_published_rows_to_max_count(memory_db
 
 @pytest.mark.asyncio
 async def test_sqlite_storage_applies_age_then_count_trimming(memory_db):
-    from dispatchr.outbox import OutboxRetentionPolicy
-    from dispatchr.outbox.sqlite import SQLiteOutboxStorage
+    from dispatchbus.outbox import OutboxRetentionPolicy
+    from dispatchbus.outbox.sqlite import SQLiteOutboxStorage
 
     storage = SQLiteOutboxStorage(memory_db)
     now = datetime.now(UTC)
 
     await memory_db.executemany(
         """
-        INSERT INTO dispatchr_outbox
+        INSERT INTO dispatchbus_outbox
         (id, message_type, payload, created_at, published_at)
         VALUES (?, ?, ?, ?, ?)
         """,
@@ -317,7 +317,7 @@ async def test_sqlite_storage_applies_age_then_count_trimming(memory_db):
 
     assert deleted == 2
     async with memory_db.execute(
-        "SELECT id FROM dispatchr_outbox ORDER BY published_at ASC"
+        "SELECT id FROM dispatchbus_outbox ORDER BY published_at ASC"
     ) as cursor:
         rows = await cursor.fetchall()
 
@@ -328,9 +328,9 @@ async def test_sqlite_storage_applies_age_then_count_trimming(memory_db):
 async def test_sqlite_storage_enqueues_message_atomically(memory_db):
     from dataclasses import dataclass
 
-    from dispatchr import MessageBase
-    from dispatchr.messages import new_root_metadata
-    from dispatchr.outbox.sqlite import SQLiteOutboxStorage
+    from dispatchbus import MessageBase
+    from dispatchbus.messages import new_root_metadata
+    from dispatchbus.outbox.sqlite import SQLiteOutboxStorage
 
     @dataclass
     class MockMessage(MessageBase):
@@ -344,6 +344,7 @@ async def test_sqlite_storage_enqueues_message_atomically(memory_db):
     class MockSerializer:
         def serialize(self, message: MessageBase) -> bytes:
             return b"mock-payload"
+
         def deserialize(self, message_type: str, payload: bytes) -> MessageBase:
             raise NotImplementedError
 
@@ -372,9 +373,9 @@ async def test_sqlite_storage_enqueues_message_atomically(memory_db):
 async def test_sqlite_storage_enqueue_rollback(memory_db):
     from dataclasses import dataclass
 
-    from dispatchr import MessageBase
-    from dispatchr.messages import new_root_metadata
-    from dispatchr.outbox.sqlite import SQLiteOutboxStorage
+    from dispatchbus import MessageBase
+    from dispatchbus.messages import new_root_metadata
+    from dispatchbus.outbox.sqlite import SQLiteOutboxStorage
 
     @dataclass
     class MockMessage(MessageBase):
@@ -388,6 +389,7 @@ async def test_sqlite_storage_enqueue_rollback(memory_db):
     class MockSerializer:
         def serialize(self, message: MessageBase) -> bytes:
             return b"mock-payload"
+
         def deserialize(self, message_type: str, payload: bytes) -> MessageBase:
             raise NotImplementedError
 

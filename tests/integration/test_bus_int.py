@@ -5,28 +5,28 @@ from functools import partial
 
 import pytest
 
-from dispatchr.bus import MessageBus
-from dispatchr.exceptions import (
+from dispatchbus.bus import MessageBus
+from dispatchbus.exceptions import (
     BusDrainingError,
     BusUsageError,
     EventPublicationError,
     InvalidMessageError,
 )
-from dispatchr.messages import (
+from dispatchbus.messages import (
     CommandBase,
     EventBase,
     MessageMetadata,
     get_metadata,
     new_root_metadata,
 )
-from dispatchr.observability import (
+from dispatchbus.observability import (
     DispatchFinished,
     DispatchStarted,
     HandlerFailed,
     HandlerFinished,
     HandlerStarted,
 )
-from dispatchr.sync_bridge import SyncBridge
+from dispatchbus.sync_bridge import SyncBridge
 
 
 @dataclass(frozen=True)

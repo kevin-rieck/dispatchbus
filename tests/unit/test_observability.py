@@ -3,8 +3,8 @@ from datetime import UTC, datetime
 
 import pytest
 
-from dispatchr.messages import new_root_metadata
-from dispatchr.observability import (
+from dispatchbus.messages import new_root_metadata
+from dispatchbus.observability import (
     DispatchFinished,
     DispatchStarted,
     HandlerFailed,

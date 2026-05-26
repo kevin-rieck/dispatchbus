@@ -5,10 +5,10 @@ from io import StringIO
 
 import pytest
 
-from dispatchr import CommandBase, MessageBus, MessageMetadata, new_root_metadata
-from dispatchr.debug import DebugSubscriber, debug_subscriber_human, debug_subscriber_key_value
-from dispatchr.exceptions import InvalidMessageError
-from dispatchr.observability import (
+from dispatchbus import CommandBase, MessageBus, MessageMetadata, new_root_metadata
+from dispatchbus.debug import DebugSubscriber, debug_subscriber_human, debug_subscriber_key_value
+from dispatchbus.exceptions import InvalidMessageError
+from dispatchbus.observability import (
     DispatchFinished,
     DispatchStarted,
     HandlerFailed,
@@ -193,7 +193,7 @@ def test_debug_subscriber_flushes_after_each_stream_write() -> None:
 
 
 def test_debug_subscriber_logger_sink_emits_levels_messages_and_extra_fields() -> None:
-    logger = logging.getLogger("dispatchr.tests.debug")
+    logger = logging.getLogger("dispatchbus.tests.debug")
     logger.handlers.clear()
     logger.setLevel(logging.DEBUG)
     logger.propagate = False

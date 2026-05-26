@@ -1,5 +1,5 @@
 def main() -> None:
-    print("dispatchr")
+    print("dispatchbus")
 
 
 if __name__ == "__main__":

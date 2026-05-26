@@ -3,8 +3,8 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from dispatchr import EventBase
-from dispatchr.outbox import JSONSerializer
+from dispatchbus import EventBase
+from dispatchbus.outbox import JSONSerializer
 
 
 @dataclass(frozen=True)

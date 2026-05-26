@@ -3,16 +3,16 @@ from collections.abc import Sequence
 from concurrent.futures import Executor
 from typing import Any
 
-from dispatchr.command_dispatch import CommandDispatcher
-from dispatchr.event_publisher import EventPublisher
-from dispatchr.exceptions import BusUsageError
-from dispatchr.lifecycle import BusLifecycle
-from dispatchr.messages import CommandBase, EventBase, as_runtime_message
-from dispatchr.middleware import Middleware
-from dispatchr.observability import Subscriber
-from dispatchr.registry import HandlerRegistry
-from dispatchr.runtime import EventConcurrency, MessageRuntime
-from dispatchr.sync_bridge import SyncBridge
+from dispatchbus.command_dispatch import CommandDispatcher
+from dispatchbus.event_publisher import EventPublisher
+from dispatchbus.exceptions import BusUsageError
+from dispatchbus.lifecycle import BusLifecycle
+from dispatchbus.messages import CommandBase, EventBase, as_runtime_message
+from dispatchbus.middleware import Middleware
+from dispatchbus.observability import Subscriber
+from dispatchbus.registry import HandlerRegistry
+from dispatchbus.runtime import EventConcurrency, MessageRuntime
+from dispatchbus.sync_bridge import SyncBridge
 
 
 class MessageBus:

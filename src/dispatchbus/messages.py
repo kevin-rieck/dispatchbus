@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from typing import ClassVar, Self
 from uuid import uuid4
 
-from dispatchr.exceptions import InvalidMessageError
+from dispatchbus.exceptions import InvalidMessageError
 
 
 @dataclass(frozen=True)
