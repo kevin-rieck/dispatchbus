@@ -2,6 +2,8 @@
 
 `dispatchbus` is an in-memory Python message bus for applications that want explicit command and event dispatch without bringing in a framework.
 
+> **Alpha release:** `dispatchbus` is in early prerelease status. Expect rough edges and breaking changes before a stable release.
+
 It supports:
 
 - one command handler per command
