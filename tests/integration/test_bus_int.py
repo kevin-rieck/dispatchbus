@@ -5,28 +5,28 @@ from functools import partial
 
 import pytest
 
-from dispatchr.bus import MessageBus
-from dispatchr.exceptions import (
+from dispatchbus.bus import MessageBus
+from dispatchbus.exceptions import (
     BusDrainingError,
     BusUsageError,
     EventPublicationError,
     InvalidMessageError,
 )
-from dispatchr.messages import (
+from dispatchbus.messages import (
     CommandBase,
     EventBase,
     MessageMetadata,
     get_metadata,
     new_root_metadata,
 )
-from dispatchr.observability import (
+from dispatchbus.observability import (
     DispatchFinished,
     DispatchStarted,
     HandlerFailed,
     HandlerFinished,
     HandlerStarted,
 )
-from dispatchr.sync_bridge import SyncBridge
+from dispatchbus.sync_bridge import SyncBridge
 
 
 @dataclass(frozen=True)
@@ -933,7 +933,7 @@ async def test_subscribers_see_nested_follow_up_publishes_as_normal_dispatches()
     seen: list[tuple[str, str]] = []
 
     async def subscriber(event: object) -> None:
-        if isinstance(event, (DispatchStarted, DispatchFinished)):
+        if isinstance(event, DispatchStarted | DispatchFinished):
             seen.append((type(event).__name__, event.operation))
 
     bus = MessageBus(subscribers=[subscriber], event_concurrency="sequential")

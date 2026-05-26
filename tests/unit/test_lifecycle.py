@@ -1,7 +1,7 @@
 import pytest
 
-from dispatchr.exceptions import BusDrainingError
-from dispatchr.lifecycle import BusLifecycle
+from dispatchbus.exceptions import BusDrainingError
+from dispatchbus.lifecycle import BusLifecycle
 
 
 @pytest.mark.asyncio

@@ -4,12 +4,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from dispatchr.exceptions import (
+from dispatchbus.exceptions import (
     DuplicateCommandHandlerError,
     HandlerRegistrationError,
     NoCommandHandlerError,
 )
-from dispatchr.messages import CommandBase, EventBase
+from dispatchbus.messages import CommandBase, EventBase
 
 Handler = Callable[..., Any]
 ContextStyle = Literal["none", "positional", "keyword"]

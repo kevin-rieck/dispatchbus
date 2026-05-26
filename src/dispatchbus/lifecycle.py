@@ -3,7 +3,7 @@ import contextvars
 import threading
 from enum import Enum, auto
 
-from dispatchr.exceptions import BusDrainingError
+from dispatchbus.exceptions import BusDrainingError
 
 
 class BusState(Enum):
@@ -20,7 +20,7 @@ class BusLifecycle:
         self._drained = threading.Event()
         self._drained.set()
         self._accepted_publish_depth: contextvars.ContextVar[int] = contextvars.ContextVar(
-            "dispatchr_bus_accepted_publish_depth",
+            "dispatchbus_bus_accepted_publish_depth",
             default=0,
         )
 

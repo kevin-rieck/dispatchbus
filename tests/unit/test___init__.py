@@ -1,11 +1,11 @@
 def test_public_api_exports_message_bus() -> None:
-    from dispatchr import MessageBus
+    from dispatchbus import MessageBus
 
     assert MessageBus.__name__ == "MessageBus"
 
 
 def test_public_api_exports_observability_events() -> None:
-    from dispatchr import (
+    from dispatchbus import (
         DispatchFinished,
         DispatchStarted,
         HandlerFailed,
@@ -21,13 +21,19 @@ def test_public_api_exports_observability_events() -> None:
 
 
 def test_public_api_exports_bus_draining_error() -> None:
-    from dispatchr.exceptions import BusDrainingError
+    from dispatchbus.exceptions import BusDrainingError
 
     assert issubclass(BusDrainingError, Exception)
 
 
 def test_public_api_exports_message_primitives() -> None:
-    from dispatchr import CommandBase, EventBase, MessageMetadata, get_metadata, new_root_metadata
+    from dispatchbus import (
+        CommandBase,
+        EventBase,
+        MessageMetadata,
+        get_metadata,
+        new_root_metadata,
+    )
 
     assert CommandBase.__name__ == "CommandBase"
     assert EventBase.__name__ == "EventBase"
@@ -37,6 +43,6 @@ def test_public_api_exports_message_primitives() -> None:
 
 
 def test_public_init_exports_get_metadata() -> None:
-    from dispatchr import get_metadata
+    from dispatchbus import get_metadata
 
     assert callable(get_metadata)

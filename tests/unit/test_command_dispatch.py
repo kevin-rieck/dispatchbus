@@ -2,9 +2,9 @@ from dataclasses import dataclass
 
 import pytest
 
-from dispatchr.command_dispatch import CommandDispatcher
-from dispatchr.exceptions import InvalidMessageError
-from dispatchr.messages import (
+from dispatchbus.command_dispatch import CommandDispatcher
+from dispatchbus.exceptions import InvalidMessageError
+from dispatchbus.messages import (
     CommandBase,
     EventBase,
     MessageMetadata,
@@ -13,8 +13,8 @@ from dispatchr.messages import (
     get_metadata,
     new_root_metadata,
 )
-from dispatchr.registry import HandlerRegistry
-from dispatchr.runtime import MessageRuntime
+from dispatchbus.registry import HandlerRegistry
+from dispatchbus.runtime import MessageRuntime
 
 
 @dataclass(frozen=True)

@@ -4,16 +4,16 @@ from typing import Any, cast
 
 import pytest
 
-from dispatchr.bus import MessageBus
-from dispatchr.exceptions import BusUsageError, HandlerRegistrationError, InvalidMessageError
-from dispatchr.messages import (
+from dispatchbus.bus import MessageBus
+from dispatchbus.exceptions import BusUsageError, HandlerRegistrationError, InvalidMessageError
+from dispatchbus.messages import (
     CommandBase,
     EventBase,
     MessageMetadata,
     get_metadata,
     new_root_metadata,
 )
-from dispatchr.runtime import EventConcurrency
+from dispatchbus.runtime import EventConcurrency
 
 
 @dataclass(frozen=True)

@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import uuid4
 
-from dispatchr.messages import MessageMetadata
+from dispatchbus.messages import MessageMetadata
 
 Operation = Literal["send", "publish"]
 Subscriber = Callable[[Any], Any]
