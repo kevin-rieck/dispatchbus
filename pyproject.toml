@@ -11,7 +11,19 @@ requires-python = ">=3.12"
 authors = [
   { name = "Kevin Rieck" },
 ]
+license = "Apache-2.0"
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: OS Independent",
+]
 dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/kevin-rieck/dispatchr"
+Repository = "https://github.com/kevin-rieck/dispatchr.git"
+Issues = "https://github.com/kevin-rieck/dispatchr/issues"
 
 [project.scripts]
 dispatchr = "dispatchr.__main__:main"
