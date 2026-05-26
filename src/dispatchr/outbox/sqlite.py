@@ -1,9 +1,17 @@
 import re
 from datetime import UTC, datetime, timedelta
+from uuid import uuid4
 
 import aiosqlite
 
-from dispatchr.outbox.models import OutboxMessage, OutboxRetentionPolicy, OutboxStorage
+from dispatchr import MessageBase
+from dispatchr.messages import get_metadata
+from dispatchr.outbox.models import (
+    MessageSerializer,
+    OutboxMessage,
+    OutboxRetentionPolicy,
+    OutboxStorage,
+)
 
 _SQL_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -159,3 +167,45 @@ class SQLiteOutboxStorage(OutboxStorage):
             raise
 
         return deleted
+
+    async def enqueue(
+        self,
+        message: MessageBase,
+        serializer: MessageSerializer,
+        *,
+        message_id: str | None = None,
+        created_at: datetime | None = None,
+    ) -> None:
+        """
+        Serializes and inserts a message into the outbox table.
+
+        The insertion uses the configured `aiosqlite.Connection` and does NOT auto-commit.
+        Callers must commit the connection to atomically save the outbox row alongside business
+        data.
+        """
+        resolved_id = message_id
+        resolved_created_at = created_at
+
+        if not resolved_id or not resolved_created_at:
+            try:
+                meta = get_metadata(message)
+                resolved_id = resolved_id or meta.message_id
+                resolved_created_at = resolved_created_at or meta.timestamp
+            except ValueError:
+                pass
+
+        resolved_id = resolved_id or uuid4().hex
+        resolved_created_at = resolved_created_at or datetime.now(UTC)
+
+        payload = serializer.serialize(message)
+        message_type = getattr(message, "message_name", type(message).__name__)
+
+        query = f"""
+            INSERT INTO {self.table_name}
+            (id, message_type, payload, created_at)
+            VALUES (?, ?, ?, ?)
+        """
+        await self.connection.execute(
+            query,
+            (resolved_id, message_type, payload, resolved_created_at.isoformat()),
+        )

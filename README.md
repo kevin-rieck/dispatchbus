@@ -313,6 +313,33 @@ SQLite example:
 from dispatchr.outbox import SQLiteOutboxStorage
 ```
 
+### Ensuring atomicity
+
+To guarantee that your outbox message is written if and only if your business data is saved, you should write both in the same transaction using `SQLiteOutboxStorage.enqueue()`. The `enqueue()` method inserts the outbox row using the configured connection but explicitly does not commit. You must manage the transaction and the final commit:
+
+```python
+import aiosqlite
+
+async def handle_request(payload: dict) -> None:
+    async with aiosqlite.connect("database.db") as db:
+        storage = SQLiteOutboxStorage(db)
+        
+        await db.execute("BEGIN")
+        try:
+            # 1. Write business data
+            await db.execute("INSERT INTO users (name) VALUES (?)", (payload["name"],))
+            
+            # 2. Enqueue the outbox message
+            event = UserCreated(name=payload["name"])
+            await storage.enqueue(event, serializer)
+            
+            # 3. Commit both atomically
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+```
+
 SQLite operational note: deleting rows does not necessarily shrink the database file immediately. If reclaiming file size matters, use SQLite operational tools such as `VACUUM` or configure auto-vacuum appropriately.
 
 If `aiosqlite` is not installed, importing `dispatchr.outbox` still works, but accessing `SQLiteOutboxStorage` raises an `ImportError` telling you to install `dispatchr[sqlite]`.

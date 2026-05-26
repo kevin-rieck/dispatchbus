@@ -322,3 +322,85 @@ async def test_sqlite_storage_applies_age_then_count_trimming(memory_db):
         rows = await cursor.fetchall()
 
     assert [row[0] for row in rows] == ["keep-2", "keep-3"]
+
+
+@pytest.mark.asyncio
+async def test_sqlite_storage_enqueues_message_atomically(memory_db):
+    from dataclasses import dataclass
+
+    from dispatchr import MessageBase
+    from dispatchr.messages import new_root_metadata
+    from dispatchr.outbox.sqlite import SQLiteOutboxStorage
+
+    @dataclass
+    class MockMessage(MessageBase):
+        message_name = "mock.message"
+        _metadata = new_root_metadata()
+
+        @property
+        def metadata(self):
+            return self._metadata
+
+    class MockSerializer:
+        def serialize(self, message: MessageBase) -> bytes:
+            return b"mock-payload"
+        def deserialize(self, message_type: str, payload: bytes) -> MessageBase:
+            raise NotImplementedError
+
+    storage = SQLiteOutboxStorage(memory_db)
+    serializer = MockSerializer()
+    message = MockMessage()
+
+    await memory_db.execute("BEGIN")
+    try:
+        await memory_db.execute("CREATE TABLE IF NOT EXISTS business_data (id INTEGER)")
+        await memory_db.execute("INSERT INTO business_data (id) VALUES (1)")
+        await storage.enqueue(message, serializer)
+        await memory_db.commit()
+    except Exception:
+        await memory_db.rollback()
+        raise
+
+    pending = await storage.claim_pending_messages(batch_size=10)
+    assert len(pending) == 1
+    assert pending[0].id == message.metadata.message_id
+    assert pending[0].message_type == "mock.message"
+    assert pending[0].payload == b"mock-payload"
+
+
+@pytest.mark.asyncio
+async def test_sqlite_storage_enqueue_rollback(memory_db):
+    from dataclasses import dataclass
+
+    from dispatchr import MessageBase
+    from dispatchr.messages import new_root_metadata
+    from dispatchr.outbox.sqlite import SQLiteOutboxStorage
+
+    @dataclass
+    class MockMessage(MessageBase):
+        message_name = "mock.message"
+        _metadata = new_root_metadata()
+
+        @property
+        def metadata(self):
+            return self._metadata
+
+    class MockSerializer:
+        def serialize(self, message: MessageBase) -> bytes:
+            return b"mock-payload"
+        def deserialize(self, message_type: str, payload: bytes) -> MessageBase:
+            raise NotImplementedError
+
+    storage = SQLiteOutboxStorage(memory_db)
+    serializer = MockSerializer()
+    message = MockMessage()
+
+    await memory_db.execute("BEGIN")
+    try:
+        await storage.enqueue(message, serializer)
+        raise RuntimeError("Something went wrong in business logic")
+    except Exception:
+        await memory_db.rollback()
+
+    pending = await storage.claim_pending_messages(batch_size=10)
+    assert len(pending) == 0
