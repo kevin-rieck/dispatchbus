@@ -933,7 +933,7 @@ async def test_subscribers_see_nested_follow_up_publishes_as_normal_dispatches()
     seen: list[tuple[str, str]] = []
 
     async def subscriber(event: object) -> None:
-        if isinstance(event, (DispatchStarted, DispatchFinished)):
+        if isinstance(event, DispatchStarted | DispatchFinished):
             seen.append((type(event).__name__, event.operation))
 
     bus = MessageBus(subscribers=[subscriber], event_concurrency="sequential")

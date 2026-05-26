@@ -80,9 +80,9 @@ class DebugSubscriber:
         )
 
     def _filter_event(self, event: object) -> HandledEvent | None:
-        if isinstance(event, (HandlerStarted, HandlerFinished, HandlerFailed)):
+        if isinstance(event, HandlerStarted | HandlerFinished | HandlerFailed):
             return event
-        if self._include_dispatch and isinstance(event, (DispatchStarted, DispatchFinished)):
+        if self._include_dispatch and isinstance(event, DispatchStarted | DispatchFinished):
             return event
         return None
 
@@ -131,14 +131,14 @@ def _base_extra(event: HandledEvent) -> dict[str, Any]:
         "operation": event.operation,
         "message_type": _message_type_name(event.message_type),
     }
-    if isinstance(event, (HandlerStarted, HandlerFinished, HandlerFailed)):
+    if isinstance(event, HandlerStarted | HandlerFinished | HandlerFailed):
         extra["handler_name"] = event.handler_name
-    if isinstance(event, (DispatchStarted, DispatchFinished)):
+    if isinstance(event, DispatchStarted | DispatchFinished):
         extra["handler_count"] = event.handler_count
     if isinstance(event, DispatchFinished):
         extra["duration_ms"] = event.duration_ms
         extra["success"] = event.success
-    if isinstance(event, (HandlerFinished, HandlerFailed)):
+    if isinstance(event, HandlerFinished | HandlerFailed):
         extra["duration_ms"] = event.duration_ms
     if isinstance(event, HandlerFailed):
         extra["error_type"] = type(event.error).__name__
