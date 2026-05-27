@@ -1,10 +1,9 @@
 import asyncio
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Sequence
 from concurrent.futures import Executor
 from typing import Any
 
 from dispatchbus.command_dispatch import CommandDispatcher
-from dispatchbus.context import EventContext
 from dispatchbus.event_publisher import EventPublisher
 from dispatchbus.exceptions import BusUsageError
 from dispatchbus.lifecycle import BusLifecycle
@@ -12,10 +11,8 @@ from dispatchbus.messages import CommandBase, EventBase, as_runtime_message
 from dispatchbus.middleware import Middleware
 from dispatchbus.observability import Subscriber
 from dispatchbus.registry import HandlerRegistry
-from dispatchbus.runtime import EventConcurrency, MessageRuntime
+from dispatchbus.runtime import ErrorHandler, EventConcurrency, MessageRuntime
 from dispatchbus.sync_bridge import SyncBridge
-
-ErrorHandler = Callable[[Exception, Any, Any, EventContext], Awaitable[None] | None]
 
 
 class MessageBus:

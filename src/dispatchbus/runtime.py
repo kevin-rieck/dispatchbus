@@ -22,6 +22,7 @@ from dispatchbus.observability import (
 from dispatchbus.registry import RegisteredHandler
 
 Handler = Callable[..., Any]
+ErrorHandler = Callable[[Exception, Any, Any, EventContext], Awaitable[None] | None]
 EventConcurrency = Literal["concurrent", "sequential"]
 
 logger = logging.getLogger("dispatchbus")
@@ -59,7 +60,7 @@ class MessageRuntime:
         executor: Executor | None = None,
         *,
         event_concurrency: EventConcurrency = "concurrent",
-        error_handler: Any | None = None,
+        error_handler: ErrorHandler | None = None,
     ) -> None:
         if event_concurrency not in {"concurrent", "sequential"}:
             raise HandlerRegistrationError("event_concurrency must be 'concurrent' or 'sequential'")
@@ -227,22 +228,62 @@ class MessageRuntime:
         try:
             result = await self._call_handler(registered_handler, payload, context)
         except Exception as exc:
-            await self.notify_subscribers(
-                subscribers,
-                HandlerFailed(
-                    message=payload,
-                    metadata=metadata,
-                    message_type=type(payload),
-                    operation=operation,
-                    timestamp=datetime.now(),
-                    dispatch_id=dispatch_id,
-                    handler=handler,
-                    handler_name=name,
-                    duration_ms=(perf_counter() - started) * 1000,
-                    error=exc,
-                ),
-            )
-            raise
+            if self._error_handler is not None:
+                try:
+                    await self._call_error_handler(exc, payload, handler, context)
+                    # For now, if it returns normally, we still notify and raise
+                    # to satisfy the tests in Task 2 which expect error propagation.
+                    # We will implement swallowing in Task 3.
+                    await self.notify_subscribers(
+                        subscribers,
+                        HandlerFailed(
+                            message=payload,
+                            metadata=metadata,
+                            message_type=type(payload),
+                            operation=operation,
+                            timestamp=datetime.now(),
+                            dispatch_id=dispatch_id,
+                            handler=handler,
+                            handler_name=name,
+                            duration_ms=(perf_counter() - started) * 1000,
+                            error=exc,
+                        ),
+                    )
+                    raise exc
+                except Exception as handler_exc:
+                    await self.notify_subscribers(
+                        subscribers,
+                        HandlerFailed(
+                            message=payload,
+                            metadata=metadata,
+                            message_type=type(payload),
+                            operation=operation,
+                            timestamp=datetime.now(),
+                            dispatch_id=dispatch_id,
+                            handler=handler,
+                            handler_name=name,
+                            duration_ms=(perf_counter() - started) * 1000,
+                            error=handler_exc,
+                        ),
+                    )
+                    raise
+            else:
+                await self.notify_subscribers(
+                    subscribers,
+                    HandlerFailed(
+                        message=payload,
+                        metadata=metadata,
+                        message_type=type(payload),
+                        operation=operation,
+                        timestamp=datetime.now(),
+                        dispatch_id=dispatch_id,
+                        handler=handler,
+                        handler_name=name,
+                        duration_ms=(perf_counter() - started) * 1000,
+                        error=exc,
+                    ),
+                )
+                raise
 
         await self.notify_subscribers(
             subscribers,
@@ -282,6 +323,30 @@ class MessageRuntime:
             return _raise_if_sync_callable_returned_awaitable(result, kind="handler")
         result = await loop.run_in_executor(self._executor, handler, message)
         return _raise_if_sync_callable_returned_awaitable(result, kind="handler")
+
+    async def _call_error_handler(
+        self,
+        exc: Exception,
+        message: Any,
+        handler: Any,
+        context: EventContext,
+    ) -> None:
+        if self._error_handler is None:
+            return
+        if _is_async_callable(self._error_handler):
+            res = self._error_handler(exc, message, handler, context)
+            if res is not None:
+                await res
+        else:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(
+                self._executor,
+                self._error_handler,
+                exc,
+                message,
+                handler,
+                context,
+            )
 
     async def _call_subscriber(self, subscriber: Subscriber, event: object) -> Any:
         if _is_async_callable(subscriber):
