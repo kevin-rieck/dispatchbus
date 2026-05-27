@@ -5,6 +5,7 @@ import pytest
 from dispatchbus import CommandBase, EventBase, MessageBus
 from dispatchbus.context import EventContext
 from dispatchbus.exceptions import EventPublicationError
+from dispatchbus.observability import HandlerFailed
 
 
 def test_message_bus_accepts_error_handler() -> None:
@@ -77,3 +78,43 @@ async def test_sync_error_handler_invoked_on_command_failure() -> None:
     assert isinstance(msg, BoomCommand)
     assert handler == failing_command_handler
     assert isinstance(ctx, EventContext)
+
+
+@pytest.mark.asyncio
+async def test_error_swallowing_and_recovery() -> None:
+    observability_seen = []
+
+    async def obs_subscriber(event) -> None:
+        if isinstance(event, HandlerFailed):
+            observability_seen.append(event)
+
+    async def swallowing_error_handler(exc, message, handler, context) -> None:
+        # Swallow the exception by returning normally
+        # Can also emit a recovery event
+        if isinstance(message, BoomEvent) and message.val == 99:
+            context.emit(BoomEvent(val=100))
+
+    runs = []
+
+    async def failing_handler(event: BoomEvent) -> None:
+        if event.val == 99:
+            runs.append(event.val)
+            raise ValueError("boom")
+
+    async def recovery_handler(event: BoomEvent) -> None:
+        if event.val == 100:
+            runs.append(event.val)
+
+    bus = MessageBus(error_handler=swallowing_error_handler, subscribers=[obs_subscriber])
+    bus.register_event_handler(BoomEvent, failing_handler)
+    bus.register_event_handler(BoomEvent, recovery_handler)
+
+    # Should not raise any error
+    await bus.publish(BoomEvent(val=99))
+
+    # Failing handler runs for 99 (fails, swallowed), recovery runs for 100
+    assert runs == [99, 100]
+
+    # Check observability: HandlerFailed must still be dispatched
+    assert len(observability_seen) == 1
+    assert isinstance(observability_seen[0].error, ValueError)

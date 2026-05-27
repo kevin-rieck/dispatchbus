@@ -230,12 +230,11 @@ class MessageRuntime:
         except Exception as exc:
             failed_duration_ms = (perf_counter() - started) * 1000
             final_error = exc
+            swallowed = False
             if self._error_handler is not None:
                 try:
                     await self._call_error_handler(exc, payload, handler, context)
-                    # For now, if it returns normally, we still notify and raise
-                    # to satisfy the tests in Task 2 which expect error propagation.
-                    # We will implement swallowing in Task 3.
+                    swallowed = True
                 except Exception as handler_exc:
                     final_error = handler_exc
 
@@ -254,6 +253,10 @@ class MessageRuntime:
                     error=final_error,
                 ),
             )
+
+            if swallowed:
+                return HandlerOutcome(result=None, emitted_events=tuple(context.events))
+
             if final_error is exc:
                 raise
             raise final_error from exc
