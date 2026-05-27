@@ -20,3 +20,7 @@ build/
 .claude/
 .copilot/
 .pi/
+
+# Local / transient design specs
+docs/specs/*-design.md
+docs/plans/*.md

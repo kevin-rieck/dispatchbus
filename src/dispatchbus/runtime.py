@@ -228,6 +228,7 @@ class MessageRuntime:
         try:
             result = await self._call_handler(registered_handler, payload, context)
         except Exception as exc:
+            failed_duration_ms = (perf_counter() - started) * 1000
             final_error = exc
             if self._error_handler is not None:
                 try:
@@ -249,7 +250,7 @@ class MessageRuntime:
                     dispatch_id=dispatch_id,
                     handler=handler,
                     handler_name=name,
-                    duration_ms=(perf_counter() - started) * 1000,
+                    duration_ms=failed_duration_ms,
                     error=final_error,
                 ),
             )

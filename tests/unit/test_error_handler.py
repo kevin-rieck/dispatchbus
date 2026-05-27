@@ -3,6 +3,7 @@ from dataclasses import dataclass
 import pytest
 
 from dispatchbus import CommandBase, EventBase, MessageBus
+from dispatchbus.context import EventContext
 from dispatchbus.exceptions import EventPublicationError
 
 
@@ -49,7 +50,7 @@ async def test_async_error_handler_invoked_on_event_failure() -> None:
     assert isinstance(msg, BoomEvent)
     assert msg.val == 42
     assert handler == failing_handler
-    assert ctx is not None
+    assert isinstance(ctx, EventContext)
 
 
 @pytest.mark.asyncio
@@ -75,3 +76,4 @@ async def test_sync_error_handler_invoked_on_command_failure() -> None:
     assert str(exc) == "boom command handler"
     assert isinstance(msg, BoomCommand)
     assert handler == failing_command_handler
+    assert isinstance(ctx, EventContext)

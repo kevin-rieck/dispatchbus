@@ -1,0 +1,4 @@
+- This is a python project that uses uv, so run python or pytest through `uv run`
+- Use `ruff` formatting
+- Run static type checking with `pyright`
+- You can run full formatting, testing, linting with `just check`
