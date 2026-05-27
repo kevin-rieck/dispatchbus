@@ -228,62 +228,34 @@ class MessageRuntime:
         try:
             result = await self._call_handler(registered_handler, payload, context)
         except Exception as exc:
+            final_error = exc
             if self._error_handler is not None:
                 try:
                     await self._call_error_handler(exc, payload, handler, context)
                     # For now, if it returns normally, we still notify and raise
                     # to satisfy the tests in Task 2 which expect error propagation.
                     # We will implement swallowing in Task 3.
-                    await self.notify_subscribers(
-                        subscribers,
-                        HandlerFailed(
-                            message=payload,
-                            metadata=metadata,
-                            message_type=type(payload),
-                            operation=operation,
-                            timestamp=datetime.now(),
-                            dispatch_id=dispatch_id,
-                            handler=handler,
-                            handler_name=name,
-                            duration_ms=(perf_counter() - started) * 1000,
-                            error=exc,
-                        ),
-                    )
-                    raise exc
                 except Exception as handler_exc:
-                    await self.notify_subscribers(
-                        subscribers,
-                        HandlerFailed(
-                            message=payload,
-                            metadata=metadata,
-                            message_type=type(payload),
-                            operation=operation,
-                            timestamp=datetime.now(),
-                            dispatch_id=dispatch_id,
-                            handler=handler,
-                            handler_name=name,
-                            duration_ms=(perf_counter() - started) * 1000,
-                            error=handler_exc,
-                        ),
-                    )
-                    raise
-            else:
-                await self.notify_subscribers(
-                    subscribers,
-                    HandlerFailed(
-                        message=payload,
-                        metadata=metadata,
-                        message_type=type(payload),
-                        operation=operation,
-                        timestamp=datetime.now(),
-                        dispatch_id=dispatch_id,
-                        handler=handler,
-                        handler_name=name,
-                        duration_ms=(perf_counter() - started) * 1000,
-                        error=exc,
-                    ),
-                )
+                    final_error = handler_exc
+
+            await self.notify_subscribers(
+                subscribers,
+                HandlerFailed(
+                    message=payload,
+                    metadata=metadata,
+                    message_type=type(payload),
+                    operation=operation,
+                    timestamp=datetime.now(),
+                    dispatch_id=dispatch_id,
+                    handler=handler,
+                    handler_name=name,
+                    duration_ms=(perf_counter() - started) * 1000,
+                    error=final_error,
+                ),
+            )
+            if final_error is exc:
                 raise
+            raise final_error from exc
 
         await self.notify_subscribers(
             subscribers,
@@ -339,7 +311,7 @@ class MessageRuntime:
                 await res
         else:
             loop = asyncio.get_running_loop()
-            await loop.run_in_executor(
+            result = await loop.run_in_executor(
                 self._executor,
                 self._error_handler,
                 exc,
@@ -347,6 +319,7 @@ class MessageRuntime:
                 handler,
                 context,
             )
+            _raise_if_sync_callable_returned_awaitable(result, kind="error_handler")
 
     async def _call_subscriber(self, subscriber: Subscriber, event: object) -> Any:
         if _is_async_callable(subscriber):
