@@ -59,12 +59,14 @@ class MessageRuntime:
         executor: Executor | None = None,
         *,
         event_concurrency: EventConcurrency = "concurrent",
+        error_handler: Any | None = None,
     ) -> None:
         if event_concurrency not in {"concurrent", "sequential"}:
             raise HandlerRegistrationError("event_concurrency must be 'concurrent' or 'sequential'")
         self._executor = executor or ThreadPoolExecutor()
         self._owns_executor = executor is None
         self._event_concurrency = event_concurrency
+        self._error_handler = error_handler
         self._in_flight: set[asyncio.Task[Any]] = set()
 
     async def dispatch_command(

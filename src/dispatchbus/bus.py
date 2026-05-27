@@ -1,9 +1,10 @@
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from concurrent.futures import Executor
 from typing import Any
 
 from dispatchbus.command_dispatch import CommandDispatcher
+from dispatchbus.context import EventContext
 from dispatchbus.event_publisher import EventPublisher
 from dispatchbus.exceptions import BusUsageError
 from dispatchbus.lifecycle import BusLifecycle
@@ -14,6 +15,8 @@ from dispatchbus.registry import HandlerRegistry
 from dispatchbus.runtime import EventConcurrency, MessageRuntime
 from dispatchbus.sync_bridge import SyncBridge
 
+ErrorHandler = Callable[[Exception, Any, Any, EventContext], Awaitable[None] | None]
+
 
 class MessageBus:
     def __init__(
@@ -23,9 +26,14 @@ class MessageBus:
         event_concurrency: EventConcurrency = "concurrent",
         subscribers: Sequence[Subscriber] | None = None,
         executor: Executor | None = None,
+        error_handler: ErrorHandler | None = None,
     ) -> None:
         self._registry = HandlerRegistry()
-        self._runtime = MessageRuntime(event_concurrency=event_concurrency, executor=executor)
+        self._runtime = MessageRuntime(
+            event_concurrency=event_concurrency,
+            executor=executor,
+            error_handler=error_handler,
+        )
         self._middleware = list(middleware or [])
         self._subscribers = list(subscribers or [])
         self._lifecycle = BusLifecycle()
