@@ -44,9 +44,8 @@ class MessageBus:
             runtime=self._runtime,
             middleware=self._middleware,
             subscribers=self._subscribers,
+            publish_follow_up_event=self._publish_with_lifecycle,
         )
-        self._publish_event = self._event_publisher.publish
-        self._event_publisher.publish = self._publish_with_lifecycle
         self._command_dispatcher = CommandDispatcher(
             registry=self._registry,
             runtime=self._runtime,
@@ -92,7 +91,7 @@ class MessageBus:
         await self._publish_with_lifecycle(as_runtime_message(event))
 
     async def _publish_impl(self, event: Any) -> None:
-        await self._publish_event(event)
+        await self._event_publisher.publish(event)
 
     async def _publish_with_lifecycle(self, event: Any) -> None:
         token = await self._lifecycle.enter_publish()

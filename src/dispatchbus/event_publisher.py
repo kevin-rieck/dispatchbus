@@ -1,5 +1,6 @@
 import asyncio
 from collections import deque
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any
 
@@ -19,11 +20,13 @@ class EventPublisher:
         runtime: MessageRuntime,
         middleware: list[Middleware],
         subscribers: list[Subscriber],
+        publish_follow_up_event: Callable[[Any], Awaitable[None]] | None = None,
     ) -> None:
         self._registry = registry
         self._runtime = runtime
         self._middleware = middleware
         self._subscribers = subscribers
+        self._publish_follow_up_event = publish_follow_up_event or self.publish
 
     async def publish(self, event: Any) -> None:
         if self._runtime._event_concurrency == "sequential":
@@ -98,9 +101,14 @@ class EventPublisher:
             else:
                 follow_up_tasks: list[asyncio.Task[None]] = []
 
+                async def publish_follow_up_event(event: Any) -> None:
+                    await self._publish_follow_up_event(event)
+
                 async def on_outcome(outcome: Any) -> None:
                     for emitted_event in outcome.emitted_events:
-                        follow_up_tasks.append(asyncio.create_task(self.publish(emitted_event)))
+                        follow_up_tasks.append(
+                            asyncio.create_task(publish_follow_up_event(emitted_event))
+                        )
 
                 dispatch_outcome = await self._runtime.dispatch_event(
                     handlers,
