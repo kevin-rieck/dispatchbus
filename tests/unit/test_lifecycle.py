@@ -1,6 +1,6 @@
 import pytest
 
-from dispatchbus.exceptions import BusDrainingError
+from dispatchbus.exceptions import BusDrainingError, MaxDispatchChainLengthExceededError
 from dispatchbus.lifecycle import BusLifecycle
 
 
@@ -65,3 +65,37 @@ async def test_lifecycle_rejects_send_during_draining_even_with_accepted_depth()
         await lifecycle.enter_send()
 
     await lifecycle.leave_dispatch(token)
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_allows_root_dispatch_at_depth_one() -> None:
+    lifecycle = BusLifecycle(max_dispatch_chain_length=1)
+
+    token = await lifecycle.enter_publish()
+    await lifecycle.leave_dispatch(token)
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_rejects_nested_dispatch_past_limit() -> None:
+    lifecycle = BusLifecycle(max_dispatch_chain_length=1)
+
+    token = await lifecycle.enter_publish()
+    try:
+        with pytest.raises(MaxDispatchChainLengthExceededError) as exc_info:
+            await lifecycle.enter_publish()
+    finally:
+        await lifecycle.leave_dispatch(token)
+
+    assert exc_info.value.max_dispatch_chain_length == 1
+    assert exc_info.value.attempted_depth == 2
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_allows_new_root_dispatch_after_unwind() -> None:
+    lifecycle = BusLifecycle(max_dispatch_chain_length=1)
+
+    token = await lifecycle.enter_publish()
+    await lifecycle.leave_dispatch(token)
+
+    second = await lifecycle.enter_publish()
+    await lifecycle.leave_dispatch(second)
