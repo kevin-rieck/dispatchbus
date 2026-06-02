@@ -19,8 +19,8 @@ class BusLifecycle:
         self._state_lock = threading.Lock()
         self._drained = threading.Event()
         self._drained.set()
-        self._accepted_publish_depth: contextvars.ContextVar[int] = contextvars.ContextVar(
-            "dispatchbus_bus_accepted_publish_depth",
+        self._accepted_dispatch_depth: contextvars.ContextVar[int] = contextvars.ContextVar(
+            "dispatchbus_bus_accepted_dispatch_depth",
             default=0,
         )
 
@@ -31,7 +31,7 @@ class BusLifecycle:
         return self._enter("publish")
 
     def _enter(self, operation: str) -> contextvars.Token[int]:
-        current_depth = self._accepted_publish_depth.get()
+        current_depth = self._accepted_dispatch_depth.get()
         with self._state_lock:
             if self._state is BusState.CLOSED:
                 raise BusDrainingError("message bus is draining")
@@ -41,10 +41,10 @@ class BusLifecycle:
                 raise BusDrainingError("message bus is draining")
             self._in_flight_dispatches += 1
             self._drained.clear()
-        return self._accepted_publish_depth.set(current_depth + 1)
+        return self._accepted_dispatch_depth.set(current_depth + 1)
 
     async def leave_dispatch(self, token: contextvars.Token[int]) -> None:
-        self._accepted_publish_depth.reset(token)
+        self._accepted_dispatch_depth.reset(token)
         with self._state_lock:
             self._in_flight_dispatches -= 1
             if self._in_flight_dispatches == 0:
