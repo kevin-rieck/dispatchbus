@@ -14,6 +14,8 @@ class BusState(Enum):
 
 class BusLifecycle:
     def __init__(self, *, max_dispatch_chain_length: int | None = None) -> None:
+        if max_dispatch_chain_length is not None and max_dispatch_chain_length <= 0:
+            raise ValueError("max_dispatch_chain_length must be a positive integer or None")
         self._max_dispatch_chain_length = max_dispatch_chain_length
         self._state = BusState.OPEN
         self._in_flight_dispatches = 0

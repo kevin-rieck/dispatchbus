@@ -56,7 +56,7 @@ async def test_lifecycle_rejects_nested_publish_after_close() -> None:
 
 
 @pytest.mark.asyncio
-async def test_lifecycle_rejects_send_during_draining_even_with_accepted_depth() -> None:
+async def test_lifecycle_rejects_send_during_draining_even_with_active_dispatch_depth() -> None:
     lifecycle = BusLifecycle()
     token = await lifecycle.enter_send()
     await lifecycle.begin_close(block=False)
@@ -65,6 +65,14 @@ async def test_lifecycle_rejects_send_during_draining_even_with_accepted_depth()
         await lifecycle.enter_send()
 
     await lifecycle.leave_dispatch(token)
+
+
+def test_lifecycle_rejects_non_positive_max_dispatch_chain_length() -> None:
+    with pytest.raises(ValueError, match="max_dispatch_chain_length"):
+        BusLifecycle(max_dispatch_chain_length=0)
+
+    with pytest.raises(ValueError, match="max_dispatch_chain_length"):
+        BusLifecycle(max_dispatch_chain_length=-1)
 
 
 @pytest.mark.asyncio
