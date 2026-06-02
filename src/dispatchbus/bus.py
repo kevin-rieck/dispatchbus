@@ -36,7 +36,7 @@ class MessageBus:
         )
         self._middleware = list(middleware or [])
         self._subscribers = list(subscribers or [])
-        self._lifecycle = BusLifecycle()
+        self._lifecycle = BusLifecycle(max_dispatch_chain_length=max_dispatch_chain_length)
         self._max_dispatch_chain_length = max_dispatch_chain_length
         self._sync_bridge = SyncBridge()
         self._event_publisher = EventPublisher(
@@ -45,12 +45,14 @@ class MessageBus:
             middleware=self._middleware,
             subscribers=self._subscribers,
         )
+        self._publish_event = self._event_publisher.publish
+        self._event_publisher.publish = self._publish_with_lifecycle
         self._command_dispatcher = CommandDispatcher(
             registry=self._registry,
             runtime=self._runtime,
             middleware=self._middleware,
             subscribers=self._subscribers,
-            publish_event=self._event_publisher.publish,
+            publish_event=self._publish_with_lifecycle,
         )
 
     async def __aenter__(self) -> "MessageBus":
@@ -87,14 +89,17 @@ class MessageBus:
 
     async def publish(self, event: Any) -> None:
         self._require_event_instance(event)
-        token = await self._lifecycle.enter_publish()
-        try:
-            await self._publish_impl(as_runtime_message(event))
-        finally:
-            await self._lifecycle.leave_dispatch(token)
+        await self._publish_with_lifecycle(as_runtime_message(event))
 
     async def _publish_impl(self, event: Any) -> None:
-        await self._event_publisher.publish(event)
+        await self._publish_event(event)
+
+    async def _publish_with_lifecycle(self, event: Any) -> None:
+        token = await self._lifecycle.enter_publish()
+        try:
+            await self._publish_impl(event)
+        finally:
+            await self._lifecycle.leave_dispatch(token)
 
     def send_sync(self, command: Any, timeout: float | None = None) -> Any:
         if self._in_running_loop_thread():
