@@ -92,6 +92,20 @@ def test_message_bus_event_concurrency_annotation_matches_runtime_type() -> None
     assert annotation == EventConcurrency
 
 
+def test_message_bus_accepts_max_dispatch_chain_length_annotation() -> None:
+    annotation = (
+        inspect.signature(MessageBus.__init__).parameters["max_dispatch_chain_length"].annotation
+    )
+    assert annotation == int | None
+
+
+def test_message_bus_rejects_non_positive_max_dispatch_chain_length() -> None:
+    with pytest.raises(ValueError, match="max_dispatch_chain_length"):
+        MessageBus(max_dispatch_chain_length=0)
+    with pytest.raises(ValueError, match="max_dispatch_chain_length"):
+        MessageBus(max_dispatch_chain_length=-1)
+
+
 def test_invalid_event_concurrency_raises() -> None:
     with pytest.raises(HandlerRegistrationError):
         MessageBus(event_concurrency=cast(Any, "bogus"))

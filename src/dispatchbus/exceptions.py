@@ -22,6 +22,18 @@ class EventPublicationError(DispatchbusError):
         self.failures = failures
 
 
+class MaxDispatchChainLengthExceededError(DispatchbusError):
+    """Raised when a nested dispatch would exceed the configured chain length."""
+
+    def __init__(self, max_dispatch_chain_length: int, attempted_depth: int) -> None:
+        super().__init__(
+            "max dispatch chain length "
+            f"{max_dispatch_chain_length} exceeded by attempted depth {attempted_depth}"
+        )
+        self.max_dispatch_chain_length = max_dispatch_chain_length
+        self.attempted_depth = attempted_depth
+
+
 class BusDrainingError(DispatchbusError):
     """Raised when the message bus is draining and not accepting new messages."""
 

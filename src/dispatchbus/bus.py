@@ -24,7 +24,10 @@ class MessageBus:
         subscribers: Sequence[Subscriber] | None = None,
         executor: Executor | None = None,
         error_handler: ErrorHandler | None = None,
+        max_dispatch_chain_length: int | None = None,
     ) -> None:
+        if max_dispatch_chain_length is not None and max_dispatch_chain_length <= 0:
+            raise ValueError("max_dispatch_chain_length must be a positive integer or None")
         self._registry = HandlerRegistry()
         self._runtime = MessageRuntime(
             event_concurrency=event_concurrency,
@@ -34,6 +37,7 @@ class MessageBus:
         self._middleware = list(middleware or [])
         self._subscribers = list(subscribers or [])
         self._lifecycle = BusLifecycle()
+        self._max_dispatch_chain_length = max_dispatch_chain_length
         self._sync_bridge = SyncBridge()
         self._event_publisher = EventPublisher(
             registry=self._registry,

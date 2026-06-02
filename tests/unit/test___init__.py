@@ -26,6 +26,12 @@ def test_public_api_exports_bus_draining_error() -> None:
     assert issubclass(BusDrainingError, Exception)
 
 
+def test_package_exports_max_dispatch_chain_length_exception() -> None:
+    from dispatchbus import MaxDispatchChainLengthExceededError
+
+    assert MaxDispatchChainLengthExceededError.__name__ == ("MaxDispatchChainLengthExceededError")
+
+
 def test_public_api_exports_message_primitives() -> None:
     from dispatchbus import (
         CommandBase,
