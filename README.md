@@ -256,8 +256,16 @@ Calling sync bridge methods inside an active event loop raises `BusUsageError`.
 
 ## Closing behavior
 
-When closing begins, the bus stops accepting new top-level sends and publishes.
-Already-running dispatch can still finish, including nested event publication triggered during that work.
+When closing begins, the bus enters a draining phase.
+
+During draining:
+
+- new top-level `send()` calls are rejected
+- new top-level `publish()` calls are rejected
+- already-accepted dispatch work is allowed to finish
+- nested publishes triggered from already-accepted work are still allowed
+
+The bus closes only after the full accepted dispatch tree has completed.
 
 ## Outbox support
 

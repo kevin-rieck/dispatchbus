@@ -11,7 +11,7 @@ from dispatchbus.messages import CommandBase, EventBase, as_runtime_message
 from dispatchbus.middleware import Middleware
 from dispatchbus.observability import Subscriber
 from dispatchbus.registry import HandlerRegistry
-from dispatchbus.runtime import EventConcurrency, MessageRuntime
+from dispatchbus.runtime import ErrorHandler, EventConcurrency, MessageRuntime
 from dispatchbus.sync_bridge import SyncBridge
 
 
@@ -23,9 +23,14 @@ class MessageBus:
         event_concurrency: EventConcurrency = "concurrent",
         subscribers: Sequence[Subscriber] | None = None,
         executor: Executor | None = None,
+        error_handler: ErrorHandler | None = None,
     ) -> None:
         self._registry = HandlerRegistry()
-        self._runtime = MessageRuntime(event_concurrency=event_concurrency, executor=executor)
+        self._runtime = MessageRuntime(
+            event_concurrency=event_concurrency,
+            executor=executor,
+            error_handler=error_handler,
+        )
         self._middleware = list(middleware or [])
         self._subscribers = list(subscribers or [])
         self._lifecycle = BusLifecycle()

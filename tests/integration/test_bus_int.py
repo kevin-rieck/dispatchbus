@@ -1774,6 +1774,53 @@ async def test_aclose_allows_follow_up_events_from_accepted_work() -> None:
 
 
 @pytest.mark.asyncio
+async def test_aclose_allows_event_originated_follow_up_events_from_accepted_work() -> None:
+    bus = MessageBus(event_concurrency="sequential")
+    root_started = asyncio.Event()
+    release_root = asyncio.Event()
+    nested_started = asyncio.Event()
+    release_nested = asyncio.Event()
+    seen: list[str] = []
+
+    async def root_handler(event: UserAdded, context) -> None:
+        if event.user_id != 1:
+            return
+        root_started.set()
+        await release_root.wait()
+        context.emit(UserAdded(user_id=2))
+        seen.append("root:done")
+
+    async def nested_handler(event: UserAdded) -> None:
+        if event.user_id != 2:
+            return
+        nested_started.set()
+        await release_nested.wait()
+        seen.append("nested:done")
+
+    bus.register_event_handler(UserAdded, root_handler)
+    bus.register_event_handler(UserAdded, nested_handler)
+
+    publish_task = asyncio.create_task(bus.publish(root_user_added(user_id=1)))
+    await root_started.wait()
+
+    close_task = asyncio.create_task(bus.aclose())
+    await asyncio.sleep(0)
+    assert close_task.done() is False
+
+    release_root.set()
+
+    await nested_started.wait()
+    await asyncio.sleep(0)
+    assert close_task.done() is False
+
+    release_nested.set()
+
+    await publish_task
+    await close_task
+    assert seen == ["root:done", "nested:done"]
+
+
+@pytest.mark.asyncio
 async def test_sequential_follow_up_execution_no_interleaving() -> None:
     bus = MessageBus(event_concurrency="sequential")
     seen: list[str] = []
