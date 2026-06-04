@@ -430,6 +430,70 @@ async def test_max_dispatch_chain_length_rejects_nested_public_send() -> None:
 
 
 @pytest.mark.asyncio
+async def test_max_dispatch_chain_length_allows_one_nested_dispatch_at_limit_two() -> None:
+    bus = MessageBus(max_dispatch_chain_length=2)
+    seen: list[int] = []
+
+    async def handler(event: UserAdded, context) -> None:
+        seen.append(event.user_id)
+        if event.user_id == 1:
+            context.emit(UserAdded(user_id=2))
+        elif event.user_id == 2:
+            context.emit(UserAdded(user_id=3))
+
+    bus.register_event_handler(UserAdded, handler)
+
+    with pytest.raises(EventPublicationError) as exc_info:
+        await bus.publish(root_user_added(user_id=1))
+
+    assert seen == [1, 2]
+    assert any(
+        isinstance(failure, MaxDispatchChainLengthExceededError) and failure.attempted_depth == 3
+        for failure in exc_info.value.failures
+    )
+
+
+@pytest.mark.asyncio
+async def test_max_dispatch_chain_length_applies_in_concurrent_mode() -> None:
+    bus = MessageBus(max_dispatch_chain_length=1, event_concurrency="concurrent")
+
+    async def handler(event: UserAdded, context) -> None:
+        if event.user_id == 1:
+            context.emit(UserAdded(user_id=2))
+
+    bus.register_event_handler(UserAdded, handler)
+
+    with pytest.raises(EventPublicationError) as exc_info:
+        await bus.publish(root_user_added(user_id=1))
+
+    assert isinstance(exc_info.value.failures[0], MaxDispatchChainLengthExceededError)
+
+
+@pytest.mark.asyncio
+async def test_max_dispatch_chain_length_does_not_poison_later_root_dispatches() -> None:
+    bus = MessageBus(max_dispatch_chain_length=1)
+    seen: list[int] = []
+
+    async def rejecting_handler(event: UserAdded, context) -> None:
+        seen.append(event.user_id)
+        if event.user_id == 1:
+            context.emit(UserAdded(user_id=2))
+
+    async def later_root_handler(event: UserAdded) -> None:
+        seen.append(event.user_id)
+
+    bus.register_event_handler(UserAdded, rejecting_handler)
+    bus.register_event_handler(UserAdded, later_root_handler)
+
+    with pytest.raises(EventPublicationError):
+        await bus.publish(root_user_added(user_id=1))
+
+    await bus.publish(root_user_added(user_id=99))
+
+    assert seen == [1, 1, 99, 99]
+
+
+@pytest.mark.asyncio
 async def test_existing_one_argument_handlers_still_work() -> None:
     bus = MessageBus()
 
