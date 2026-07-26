@@ -1,5 +1,6 @@
 import asyncio
 from collections import deque
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
@@ -17,13 +18,16 @@ class EventPublisher:
         *,
         registry: HandlerRegistry,
         runtime: MessageRuntime,
-        middleware: list[Middleware],
-        subscribers: list[Subscriber],
+        middleware: Sequence[Middleware],
+        subscribers: Sequence[Subscriber],
     ) -> None:
         self._registry = registry
         self._runtime = runtime
-        self._middleware = middleware
-        self._subscribers = subscribers
+        self._middleware = tuple(middleware)
+        self._subscribers = list(subscribers)
+
+    def add_subscriber(self, subscriber: Subscriber) -> None:
+        self._subscribers.append(subscriber)
 
     async def publish(self, event: Any) -> None:
         if self._runtime._event_concurrency == "sequential":

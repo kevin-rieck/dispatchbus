@@ -929,6 +929,28 @@ async def test_concurrent_handlers_publish_follow_up_events_without_waiting() ->
 
 
 @pytest.mark.asyncio
+async def test_added_subscriber_sees_command_and_follow_up_event_dispatches() -> None:
+    seen: list[str] = []
+
+    async def subscriber(event: object) -> None:
+        if isinstance(event, DispatchStarted):
+            seen.append(event.operation)
+
+    bus = MessageBus(event_concurrency="sequential")
+    bus.add_subscriber(subscriber)
+
+    async def command_handler(command: AddUser, context) -> str:
+        context.emit(UserAdded(user_id=len(command.name)))
+        return command.name
+
+    bus.register_command_handler(AddUser, command_handler)
+    bus.register_event_handler(UserAdded, lambda event: None)
+
+    assert await bus.send(root_add_user(name="ada")) == "ada"
+    assert seen == ["send", "publish"]
+
+
+@pytest.mark.asyncio
 async def test_subscribers_see_nested_follow_up_publishes_as_normal_dispatches() -> None:
     seen: list[tuple[str, str]] = []
 

@@ -62,10 +62,10 @@ class PlainUserAdded(EventBase):
     user_id: int
 
 
-def test_message_bus_uses_lifecycle_collaborator() -> None:
+def test_dispatch_tree_owns_lifecycle_admission() -> None:
     bus = MessageBus()
 
-    assert bus._lifecycle is not None
+    assert bus._dispatch_tree._lifecycle is not None
 
 
 def test_message_bus_uses_sync_bridge() -> None:
@@ -74,16 +74,30 @@ def test_message_bus_uses_sync_bridge() -> None:
     assert bus._sync_bridge is not None
 
 
-def test_message_bus_uses_event_publisher() -> None:
+def test_dispatch_tree_owns_event_publisher() -> None:
     bus = MessageBus()
 
-    assert bus._event_publisher is not None
+    assert bus._dispatch_tree._event_publisher is not None
 
 
-def test_message_bus_uses_command_dispatcher() -> None:
+def test_message_bus_uses_dispatch_tree() -> None:
     bus = MessageBus()
 
-    assert bus._command_dispatcher is not None
+    assert bus._dispatch_tree is not None
+
+
+def test_dispatch_tree_does_not_share_mutable_collections() -> None:
+    async def middleware(message, call_next):
+        return await call_next(message)
+
+    subscribers = [lambda event: None]
+    middleware_stack = [middleware]
+    bus = MessageBus(middleware=middleware_stack, subscribers=subscribers)
+
+    assert bus._dispatch_tree._middleware == tuple(middleware_stack)
+    assert bus._dispatch_tree._event_publisher._middleware == tuple(middleware_stack)
+    assert bus._dispatch_tree._subscribers is not subscribers
+    assert bus._dispatch_tree._event_publisher._subscribers is not bus._dispatch_tree._subscribers
 
 
 def test_message_bus_event_concurrency_annotation_matches_runtime_type() -> None:
@@ -163,15 +177,15 @@ async def test_publish_plain_root_event_delivers_payload() -> None:
 async def test_async_context_manager() -> None:
     async with MessageBus() as bus:
         assert isinstance(bus, MessageBus)
-        assert bus._lifecycle._state.name == "OPEN"
-    assert bus._lifecycle._state.name == "CLOSED"
+        assert bus._dispatch_tree._lifecycle._state.name == "OPEN"
+    assert bus._dispatch_tree._lifecycle._state.name == "CLOSED"
 
 
 def test_sync_context_manager() -> None:
     with MessageBus() as bus:
         assert isinstance(bus, MessageBus)
-        assert bus._lifecycle._state.name == "OPEN"
-    assert bus._lifecycle._state.name == "CLOSED"
+        assert bus._dispatch_tree._lifecycle._state.name == "OPEN"
+    assert bus._dispatch_tree._lifecycle._state.name == "CLOSED"
 
 
 def test_custom_executor() -> None:
@@ -179,8 +193,8 @@ def test_custom_executor() -> None:
 
     executor = ThreadPoolExecutor(max_workers=2)
     bus = MessageBus(executor=executor)
-    assert bus._runtime._executor is executor
-    assert bus._runtime._owns_executor is False
+    assert bus._dispatch_tree._runtime._executor is executor
+    assert bus._dispatch_tree._runtime._owns_executor is False
     bus.close()
-    assert bus._runtime._executor is executor
+    assert bus._dispatch_tree._runtime._executor is executor
     executor.shutdown(wait=True)
