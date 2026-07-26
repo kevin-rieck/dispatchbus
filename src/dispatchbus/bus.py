@@ -3,12 +3,12 @@ from collections.abc import Sequence
 from concurrent.futures import Executor
 from typing import Any
 
-from dispatchbus.dispatch_tree import DispatchTree
+from dispatchbus.dispatch_tree import DispatchTree, EventConcurrency
 from dispatchbus.exceptions import BusUsageError
 from dispatchbus.messages import CommandBase, EventBase, as_runtime_message
 from dispatchbus.middleware import Middleware
 from dispatchbus.observability import Subscriber
-from dispatchbus.runtime import ErrorHandler, EventConcurrency
+from dispatchbus.runtime import ErrorHandler
 from dispatchbus.sync_bridge import SyncBridge
 
 

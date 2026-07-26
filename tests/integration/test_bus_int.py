@@ -330,6 +330,29 @@ async def test_command_handler_can_emit_multiple_follow_up_events_in_order() -> 
 
 
 @pytest.mark.asyncio
+async def test_sequential_command_follow_up_events_are_breadth_first() -> None:
+    bus = MessageBus(event_concurrency="sequential")
+    seen: list[int] = []
+
+    async def command_handler(command: AddUser, context) -> str:
+        context.emit(UserAdded(user_id=1))
+        context.emit(UserAdded(user_id=2))
+        return command.name
+
+    async def event_handler(event: UserAdded, context) -> None:
+        seen.append(event.user_id)
+        if event.user_id == 1:
+            context.emit(UserAdded(user_id=10))
+
+    bus.register_command_handler(AddUser, command_handler)
+    bus.register_event_handler(UserAdded, event_handler)
+
+    await bus.send(root_add_user(name="ada"))
+
+    assert seen == [1, 2, 10]
+
+
+@pytest.mark.asyncio
 async def test_event_handler_can_emit_follow_up_events() -> None:
     bus = MessageBus(event_concurrency="sequential")
     seen: list[str] = []

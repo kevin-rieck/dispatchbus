@@ -5,6 +5,7 @@ from typing import Any, cast
 import pytest
 
 from dispatchbus.bus import MessageBus
+from dispatchbus.dispatch_tree import EventConcurrency
 from dispatchbus.exceptions import BusUsageError, HandlerRegistrationError, InvalidMessageError
 from dispatchbus.messages import (
     CommandBase,
@@ -13,7 +14,6 @@ from dispatchbus.messages import (
     get_metadata,
     new_root_metadata,
 )
-from dispatchbus.runtime import EventConcurrency
 
 
 @dataclass(frozen=True)
@@ -74,12 +74,6 @@ def test_message_bus_uses_sync_bridge() -> None:
     assert bus._sync_bridge is not None
 
 
-def test_dispatch_tree_owns_event_publisher() -> None:
-    bus = MessageBus()
-
-    assert bus._dispatch_tree._event_publisher is not None
-
-
 def test_message_bus_uses_dispatch_tree() -> None:
     bus = MessageBus()
 
@@ -95,9 +89,7 @@ def test_dispatch_tree_does_not_share_mutable_collections() -> None:
     bus = MessageBus(middleware=middleware_stack, subscribers=subscribers)
 
     assert bus._dispatch_tree._middleware == tuple(middleware_stack)
-    assert bus._dispatch_tree._event_publisher._middleware == tuple(middleware_stack)
     assert bus._dispatch_tree._subscribers is not subscribers
-    assert bus._dispatch_tree._event_publisher._subscribers is not bus._dispatch_tree._subscribers
 
 
 def test_message_bus_event_concurrency_annotation_matches_runtime_type() -> None:
