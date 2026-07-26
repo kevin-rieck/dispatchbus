@@ -1,8 +1,7 @@
 import asyncio
 import inspect
-import logging
-from collections.abc import Awaitable, Callable, Sequence
-from concurrent.futures import Executor, ThreadPoolExecutor
+from collections.abc import Awaitable, Callable
+from concurrent.futures import Executor
 from dataclasses import dataclass
 from datetime import datetime
 from time import perf_counter
@@ -16,14 +15,12 @@ from dispatchbus.observability import (
     HandlerFinished,
     HandlerStarted,
     Operation,
-    Subscriber,
     handler_name,
 )
 from dispatchbus.registry import RegisteredHandler
 
-Handler = Callable[..., Any]
 ErrorHandler = Callable[[Exception, Any, Any, EventContext], Awaitable[None] | None]
-logger = logging.getLogger("dispatchbus")
+TraceNotifier = Callable[[object], Awaitable[None]]
 
 
 def _is_async_callable(value: Callable[..., Any]) -> bool:
@@ -46,73 +43,26 @@ class HandlerOutcome:
     emitted_events: tuple[RuntimeMessage, ...]
 
 
-class MessageRuntime:
+class HandlerRuntime:
+    """Invoke one registered handler and collect its outcome."""
+
     def __init__(
         self,
-        executor: Executor | None = None,
+        executor: Executor,
         *,
         error_handler: ErrorHandler | None = None,
     ) -> None:
-        self._executor = executor or ThreadPoolExecutor()
-        self._owns_executor = executor is None
+        self._executor = executor
         self._error_handler = error_handler
 
-    async def dispatch_command(
-        self,
-        handler: RegisteredHandler,
-        message: Any,
-        *,
-        dispatch_id: str,
-        subscribers: Sequence[Subscriber],
-    ) -> HandlerOutcome:
-        return await self._call_handler_with_events(
-            handler,
-            message,
-            operation="send",
-            dispatch_id=dispatch_id,
-            subscribers=subscribers,
-        )
-
-    async def dispatch_event_handler(
-        self,
-        handler: RegisteredHandler,
-        message: Any,
-        *,
-        dispatch_id: str,
-        subscribers: Sequence[Subscriber],
-    ) -> HandlerOutcome:
-        return await self._call_handler_with_events(
-            handler,
-            message,
-            operation="publish",
-            dispatch_id=dispatch_id,
-            subscribers=subscribers,
-        )
-
-    async def notify_subscribers(self, subscribers: Sequence[Subscriber], event: object) -> None:
-        if not subscribers:
-            return
-        for subscriber in subscribers:
-            try:
-                await self._call_subscriber(subscriber, event)
-            except Exception as exc:
-                logger.error(
-                    "Error in subscriber %r processing event %r: %s",
-                    subscriber,
-                    event,
-                    exc,
-                    exc_info=True,
-                )
-                continue
-
-    async def _call_handler_with_events(
+    async def invoke(
         self,
         registered_handler: RegisteredHandler,
-        message: Any,
+        message: RuntimeMessage,
         *,
         operation: Operation,
         dispatch_id: str,
-        subscribers: Sequence[Subscriber],
+        notify: TraceNotifier,
     ) -> HandlerOutcome:
         started = perf_counter()
         handler = registered_handler.handler
@@ -120,8 +70,7 @@ class MessageRuntime:
         payload = payload_of(message)
         metadata = message.metadata
         context = EventContext(metadata)
-        await self.notify_subscribers(
-            subscribers,
+        await notify(
             HandlerStarted(
                 message=payload,
                 metadata=metadata,
@@ -131,7 +80,7 @@ class MessageRuntime:
                 dispatch_id=dispatch_id,
                 handler=handler,
                 handler_name=name,
-            ),
+            )
         )
         try:
             result = await self._call_handler(registered_handler, payload, context)
@@ -146,8 +95,7 @@ class MessageRuntime:
                 except Exception as handler_exc:
                     final_error = handler_exc
 
-            await self.notify_subscribers(
-                subscribers,
+            await notify(
                 HandlerFailed(
                     message=payload,
                     metadata=metadata,
@@ -159,7 +107,7 @@ class MessageRuntime:
                     handler_name=name,
                     duration_ms=failed_duration_ms,
                     error=final_error,
-                ),
+                )
             )
 
             if swallowed:
@@ -169,8 +117,7 @@ class MessageRuntime:
                 raise
             raise final_error from exc
 
-        await self.notify_subscribers(
-            subscribers,
+        await notify(
             HandlerFinished(
                 message=payload,
                 metadata=metadata,
@@ -181,7 +128,7 @@ class MessageRuntime:
                 handler=handler,
                 handler_name=name,
                 duration_ms=(perf_counter() - started) * 1000,
-            ),
+            )
         )
         return HandlerOutcome(result=result, emitted_events=tuple(context.events))
 
@@ -218,28 +165,17 @@ class MessageRuntime:
         if self._error_handler is None:
             return
         if _is_async_callable(self._error_handler):
-            res = self._error_handler(exc, message, handler, context)
-            if res is not None:
-                await res
-        else:
-            loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(
-                self._executor,
-                self._error_handler,
-                exc,
-                message,
-                handler,
-                context,
-            )
-            _raise_if_sync_callable_returned_awaitable(result, kind="error_handler")
-
-    async def _call_subscriber(self, subscriber: Subscriber, event: object) -> Any:
-        if _is_async_callable(subscriber):
-            return await subscriber(event)
+            result = self._error_handler(exc, message, handler, context)
+            if result is not None:
+                await result
+            return
         loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(self._executor, subscriber, event)
-        return _raise_if_sync_callable_returned_awaitable(result, kind="subscriber")
-
-    async def aclose(self) -> None:
-        if self._owns_executor:
-            self._executor.shutdown(wait=True)
+        result = await loop.run_in_executor(
+            self._executor,
+            self._error_handler,
+            exc,
+            message,
+            handler,
+            context,
+        )
+        _raise_if_sync_callable_returned_awaitable(result, kind="error_handler")

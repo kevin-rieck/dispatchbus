@@ -5,10 +5,10 @@ from typing import Any
 
 from dispatchbus.dispatch_tree import DispatchTree, EventConcurrency
 from dispatchbus.exceptions import BusUsageError
+from dispatchbus.handler_runtime import ErrorHandler
 from dispatchbus.messages import CommandBase, EventBase, as_runtime_message
 from dispatchbus.middleware import Middleware
 from dispatchbus.observability import Subscriber
-from dispatchbus.runtime import ErrorHandler
 from dispatchbus.sync_bridge import SyncBridge
 
 

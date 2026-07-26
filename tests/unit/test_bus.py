@@ -180,13 +180,52 @@ def test_sync_context_manager() -> None:
     assert bus._dispatch_tree._lifecycle._state.name == "CLOSED"
 
 
-def test_custom_executor() -> None:
+def test_caller_executor_remains_usable_after_bus_closes() -> None:
     from concurrent.futures import ThreadPoolExecutor
 
     executor = ThreadPoolExecutor(max_workers=2)
     bus = MessageBus(executor=executor)
-    assert bus._dispatch_tree._runtime._executor is executor
-    assert bus._dispatch_tree._runtime._owns_executor is False
+
     bus.close()
-    assert bus._dispatch_tree._runtime._executor is executor
+
+    assert executor.submit(lambda: "caller-owned").result() == "caller-owned"
     executor.shutdown(wait=True)
+
+
+def test_bus_shuts_down_internally_created_executor(monkeypatch: pytest.MonkeyPatch) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    executor = ThreadPoolExecutor(max_workers=1)
+    monkeypatch.setattr("dispatchbus.dispatch_tree.ThreadPoolExecutor", lambda: executor)
+    bus = MessageBus()
+
+    bus.close()
+
+    with pytest.raises(RuntimeError, match="cannot schedule new futures after shutdown"):
+        executor.submit(lambda: None)
+
+
+@pytest.mark.asyncio
+async def test_dispatch_tree_tracks_concurrent_event_tasks_until_completion() -> None:
+    import asyncio
+
+    bus = MessageBus(event_concurrency="concurrent")
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def handler(event: PlainUserAdded) -> None:
+        started.set()
+        await release.wait()
+
+    bus.register_event_handler(PlainUserAdded, handler)
+
+    publish_task = asyncio.create_task(bus.publish(PlainUserAdded(user_id=1)))
+    await started.wait()
+
+    assert bus._dispatch_tree._event_tasks
+
+    release.set()
+    await publish_task
+
+    assert bus._dispatch_tree._event_tasks == set()
+    await bus.aclose()
