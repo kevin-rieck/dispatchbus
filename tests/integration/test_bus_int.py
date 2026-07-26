@@ -1,5 +1,6 @@
 import asyncio
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import partial
 
@@ -686,8 +687,9 @@ async def test_send_emits_lifecycle_events_in_order() -> None:
         return command.name.upper()
 
     bus.register_command_handler(AddUser, handler)
+    command = root_add_user(name="ada")
 
-    result = await bus.send(root_add_user(name="ada"))
+    result = await bus.send(command)
 
     assert result == "ADA"
     assert [type(event) for event in seen] == [
@@ -696,11 +698,19 @@ async def test_send_emits_lifecycle_events_in_order() -> None:
         HandlerFinished,
         DispatchFinished,
     ]
+    assert all(event.message is command for event in seen)
+    assert all(event.metadata == command.metadata for event in seen)
+    assert all(event.message_type is AddUser for event in seen)
     assert all(event.operation == "send" for event in seen)
     dispatch_ids = {event.dispatch_id for event in seen}
     assert len(dispatch_ids) == 1
     assert seen[0].handler_count == 1
+    assert seen[1].handler is handler
+    assert seen[2].handler is handler
+    assert seen[1].handler_name == seen[2].handler_name
+    assert seen[2].duration_ms >= 0
     assert seen[3].success is True
+    assert seen[3].duration_ms >= 0
 
 
 @pytest.mark.asyncio
@@ -1053,6 +1063,28 @@ async def test_sync_subscriber_receives_lifecycle_events() -> None:
 
     assert result == "ADA"
     assert seen == ["DispatchStarted", "HandlerStarted", "HandlerFinished", "DispatchFinished"]
+
+
+@pytest.mark.asyncio
+async def test_sync_handler_and_subscriber_use_the_caller_executor() -> None:
+    thread_ids: list[int] = []
+
+    def subscriber(event: object) -> None:
+        thread_ids.append(threading.get_ident())
+
+    def handler(command: AddUser) -> str:
+        thread_ids.append(threading.get_ident())
+        return command.name.upper()
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        bus = MessageBus(subscribers=[subscriber], executor=executor)
+        bus.register_command_handler(AddUser, handler)
+
+        assert await bus.send(root_add_user(name="ada")) == "ADA"
+        await bus.aclose()
+
+    assert len(thread_ids) == 5
+    assert len(set(thread_ids)) == 1
 
 
 def test_send_sync_runs_command_through_background_runtime() -> None:

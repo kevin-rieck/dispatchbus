@@ -20,7 +20,7 @@ from dispatchbus.observability import (
 from dispatchbus.registry import RegisteredHandler
 
 ErrorHandler = Callable[[Exception, Any, Any, EventContext], Awaitable[None] | None]
-TraceNotifier = Callable[[object], Awaitable[None]]
+TraceDelivery = Callable[[object], Awaitable[None]]
 
 
 def _is_async_callable(value: Callable[..., Any]) -> bool:
@@ -50,9 +50,11 @@ class HandlerRuntime:
         self,
         executor: Executor,
         *,
+        trace_delivery: TraceDelivery,
         error_handler: ErrorHandler | None = None,
     ) -> None:
         self._executor = executor
+        self._trace_delivery = trace_delivery
         self._error_handler = error_handler
 
     async def invoke(
@@ -62,7 +64,6 @@ class HandlerRuntime:
         *,
         operation: Operation,
         dispatch_id: str,
-        notify: TraceNotifier,
     ) -> HandlerOutcome:
         started = perf_counter()
         handler = registered_handler.handler
@@ -70,7 +71,7 @@ class HandlerRuntime:
         payload = payload_of(message)
         metadata = message.metadata
         context = EventContext(metadata)
-        await notify(
+        await self._trace_delivery(
             HandlerStarted(
                 message=payload,
                 metadata=metadata,
@@ -95,7 +96,7 @@ class HandlerRuntime:
                 except Exception as handler_exc:
                     final_error = handler_exc
 
-            await notify(
+            await self._trace_delivery(
                 HandlerFailed(
                     message=payload,
                     metadata=metadata,
@@ -117,7 +118,7 @@ class HandlerRuntime:
                 raise
             raise final_error from exc
 
-        await notify(
+        await self._trace_delivery(
             HandlerFinished(
                 message=payload,
                 metadata=metadata,

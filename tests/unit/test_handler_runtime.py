@@ -10,6 +10,10 @@ from dispatchbus.messages import CommandBase, EventBase, as_runtime_message
 from dispatchbus.registry import RegisteredHandler
 
 
+async def ignore_trace(event: object) -> None:
+    return None
+
+
 @dataclass(frozen=True)
 class DoWork(CommandBase):
     message_name = "test.do_work"
@@ -31,24 +35,18 @@ async def test_invoke_collects_result_and_follow_up_events() -> None:
         return command.value * 2
 
     registered = RegisteredHandler(handler=handler, is_async=True, context_style="positional")
-    seen: list[object] = []
-
-    async def notify(event: object) -> None:
-        seen.append(event)
 
     with ThreadPoolExecutor(max_workers=1) as executor:
-        runtime = HandlerRuntime(executor)
+        runtime = HandlerRuntime(executor, trace_delivery=ignore_trace)
         outcome = await runtime.invoke(
             registered,
             as_runtime_message(DoWork(value=3)),
             operation="send",
             dispatch_id="dispatch-id",
-            notify=notify,
         )
 
     assert outcome.result == 6
     assert [event.payload for event in outcome.emitted_events] == [WorkFinished(value=3)]
-    assert [type(event).__name__ for event in seen] == ["HandlerStarted", "HandlerFinished"]
 
 
 @pytest.mark.asyncio
@@ -68,17 +66,17 @@ async def test_invoke_returns_recovery_events_when_error_handler_swallows_failur
 
     registered = RegisteredHandler(handler=handler, is_async=True, context_style="none")
 
-    async def notify(event: object) -> None:
-        return None
-
     with ThreadPoolExecutor(max_workers=1) as executor:
-        runtime = HandlerRuntime(executor, error_handler=error_handler)
+        runtime = HandlerRuntime(
+            executor,
+            trace_delivery=ignore_trace,
+            error_handler=error_handler,
+        )
         outcome = await runtime.invoke(
             registered,
             as_runtime_message(DoWork(value=4)),
             operation="send",
             dispatch_id="dispatch-id",
-            notify=notify,
         )
 
     assert outcome.result is None
@@ -103,11 +101,12 @@ async def test_invoke_rejects_sync_error_handler_returning_awaitable() -> None:
 
     registered = RegisteredHandler(handler=handler, is_async=True, context_style="none")
 
-    async def notify(event: object) -> None:
-        return None
-
     with ThreadPoolExecutor(max_workers=1) as executor:
-        runtime = HandlerRuntime(executor, error_handler=error_handler)
+        runtime = HandlerRuntime(
+            executor,
+            trace_delivery=ignore_trace,
+            error_handler=error_handler,
+        )
 
         with pytest.raises(BusUsageError, match="sync error_handler returned an awaitable"):
             await runtime.invoke(
@@ -115,7 +114,6 @@ async def test_invoke_rejects_sync_error_handler_returning_awaitable() -> None:
                 as_runtime_message(DoWork(value=5)),
                 operation="send",
                 dispatch_id="dispatch-id",
-                notify=notify,
             )
 
 
@@ -128,11 +126,8 @@ async def test_invoke_rejects_sync_handler_returning_awaitable() -> None:
         return inner(command)
 
     with ThreadPoolExecutor(max_workers=1) as executor:
-        runtime = HandlerRuntime(executor)
+        runtime = HandlerRuntime(executor, trace_delivery=ignore_trace)
         registered = RegisteredHandler(handler=handler, is_async=False, context_style="none")
-
-        async def notify(event: object) -> None:
-            return None
 
         with pytest.raises(BusUsageError, match="sync handler returned an awaitable"):
             await runtime.invoke(
@@ -140,5 +135,4 @@ async def test_invoke_rejects_sync_handler_returning_awaitable() -> None:
                 as_runtime_message(DoWork(value=5)),
                 operation="send",
                 dispatch_id="dispatch-id",
-                notify=notify,
             )

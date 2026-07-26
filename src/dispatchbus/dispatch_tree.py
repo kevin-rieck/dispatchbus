@@ -58,9 +58,13 @@ class DispatchTree:
         self._registry = HandlerRegistry()
         self._executor = executor if executor is not None else ThreadPoolExecutor()
         self._owns_executor = executor is None
-        self._handler_runtime = HandlerRuntime(self._executor, error_handler=error_handler)
         self._middleware = tuple(middleware or ())
         self._subscribers = list(subscribers or ())
+        self._handler_runtime = HandlerRuntime(
+            self._executor,
+            trace_delivery=self._deliver_trace,
+            error_handler=error_handler,
+        )
         self._lifecycle = BusLifecycle()
         self._event_concurrency = event_concurrency
         self._event_tasks: set[asyncio.Task[Any]] = set()
@@ -88,7 +92,7 @@ class DispatchTree:
         handler = self._registry.get_command_handler(message_type_of(runtime_command))
         dispatch_id = new_dispatch_id()
         started = perf_counter()
-        await self._notify_subscribers(
+        await self._deliver_trace(
             DispatchStarted(
                 message=payload,
                 metadata=metadata,
@@ -106,7 +110,6 @@ class DispatchTree:
                 runtime_command,
                 operation="send",
                 dispatch_id=dispatch_id,
-                notify=self._notify_subscribers,
             )
             await self._publish_events(outcome.emitted_events)
             return outcome.result
@@ -245,7 +248,7 @@ class DispatchTree:
         handlers = self._registry.get_event_handlers(message_type_of(runtime_event))
         dispatch_id = new_dispatch_id()
         started = perf_counter()
-        await self._notify_subscribers(
+        await self._deliver_trace(
             DispatchStarted(
                 message=payload,
                 metadata=metadata,
@@ -330,7 +333,6 @@ class DispatchTree:
                     event,
                     operation="publish",
                     dispatch_id=dispatch_id,
-                    notify=self._notify_subscribers,
                 )
                 await on_outcome(outcome)
             except Exception as exc:
@@ -352,7 +354,6 @@ class DispatchTree:
                     event,
                     operation="publish",
                     dispatch_id=dispatch_id,
-                    notify=self._notify_subscribers,
                 )
             )
             for handler in handlers
@@ -377,7 +378,7 @@ class DispatchTree:
         started: float,
         success: bool,
     ) -> None:
-        await self._notify_subscribers(
+        await self._deliver_trace(
             DispatchFinished(
                 message=payload,
                 metadata=metadata,
@@ -399,7 +400,7 @@ class DispatchTree:
         task.add_done_callback(self._event_tasks.discard)
         return task
 
-    async def _notify_subscribers(self, event: object) -> None:
+    async def _deliver_trace(self, event: object) -> None:
         for subscriber in self._subscribers:
             try:
                 await self._call_subscriber(subscriber, event)
