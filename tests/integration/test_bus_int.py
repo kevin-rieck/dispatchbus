@@ -331,7 +331,7 @@ async def test_command_handler_can_emit_multiple_follow_up_events_in_order() -> 
 
 
 @pytest.mark.asyncio
-async def test_sequential_command_follow_up_events_are_breadth_first() -> None:
+async def test_sequential_command_follow_up_events_finish_each_dispatch_tree_in_order() -> None:
     bus = MessageBus(event_concurrency="sequential")
     seen: list[int] = []
 
@@ -350,7 +350,30 @@ async def test_sequential_command_follow_up_events_are_breadth_first() -> None:
 
     await bus.send(root_add_user(name="ada"))
 
-    assert seen == [1, 2, 10]
+    assert seen == [1, 10, 2]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_command_follow_up_events_finish_each_dispatch_tree_in_order() -> None:
+    bus = MessageBus()
+    seen: list[int] = []
+
+    async def command_handler(command: AddUser, context) -> str:
+        context.emit(UserAdded(user_id=1))
+        context.emit(UserAdded(user_id=2))
+        return command.name
+
+    async def event_handler(event: UserAdded) -> None:
+        if event.user_id == 1:
+            await asyncio.sleep(0.01)
+        seen.append(event.user_id)
+
+    bus.register_command_handler(AddUser, command_handler)
+    bus.register_event_handler(UserAdded, event_handler)
+
+    await bus.send(root_add_user(name="ada"))
+
+    assert seen == [1, 2]
 
 
 @pytest.mark.asyncio
@@ -803,6 +826,33 @@ async def test_original_failures_preserve_when_emitted_publish_raises_error() ->
         "original boom",
         "mw boom",
     ]
+
+
+@pytest.mark.asyncio
+async def test_sequential_publish_drops_follow_up_events_when_middleware_fails_after_dispatch() -> (
+    None
+):
+    async def middleware(message, call_next):
+        result = await call_next(message)
+        if isinstance(message, UserAdded) and message.user_id == 1:
+            raise RuntimeError("mw boom")
+        return result
+
+    bus = MessageBus(middleware=[middleware], event_concurrency="sequential")
+    seen: list[int] = []
+
+    async def emitter(event: UserAdded, context) -> None:
+        seen.append(event.user_id)
+        if event.user_id == 1:
+            context.emit(UserAdded(user_id=2))
+
+    bus.register_event_handler(UserAdded, emitter)
+
+    with pytest.raises(EventPublicationError) as exc_info:
+        await bus.publish(root_user_added(user_id=1))
+
+    assert [str(failure) for failure in exc_info.value.failures] == ["mw boom"]
+    assert seen == [1]
 
 
 @pytest.mark.asyncio

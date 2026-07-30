@@ -1,44 +1,23 @@
 import asyncio
-import inspect
 import logging
-from collections import deque
-from collections.abc import Awaitable, Callable, Coroutine, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from concurrent.futures import Executor, ThreadPoolExecutor
 from datetime import datetime
 from time import perf_counter
-from typing import Any, Literal, TypeVar
+from typing import Any, Literal
 
-from dispatchbus.exceptions import (
-    BusDrainingError,
-    BusUsageError,
-    EventPublicationError,
-    HandlerRegistrationError,
-)
-from dispatchbus.handler_runtime import ErrorHandler, HandlerOutcome, HandlerRuntime
+from dispatchbus.callable_runtime import ensure_sync_result, is_async_callable
+from dispatchbus.event_publisher import EventPublisher
+from dispatchbus.exceptions import EventPublicationError, HandlerRegistrationError
+from dispatchbus.handler_runtime import ErrorHandler, HandlerRuntime
 from dispatchbus.lifecycle import BusLifecycle
 from dispatchbus.messages import RuntimeMessage, as_runtime_message, message_type_of, payload_of
 from dispatchbus.middleware import Middleware, compose_middleware
 from dispatchbus.observability import DispatchFinished, DispatchStarted, Subscriber, new_dispatch_id
-from dispatchbus.registry import HandlerRegistry, RegisteredHandler
+from dispatchbus.registry import HandlerRegistry
 
 EventConcurrency = Literal["concurrent", "sequential"]
-OutcomeCallback = Callable[[HandlerOutcome], Awaitable[None]]
-TaskResult = TypeVar("TaskResult")
 logger = logging.getLogger("dispatchbus")
-
-
-def _is_async_callable(value: Callable[..., Any]) -> bool:
-    return inspect.iscoroutinefunction(value) or (
-        callable(value) and inspect.iscoroutinefunction(value.__call__)
-    )
-
-
-def _raise_if_sync_callable_returned_awaitable(result: Any, *, kind: str) -> Any:
-    if inspect.isawaitable(result):
-        if inspect.iscoroutine(result):
-            result.close()
-        raise BusUsageError(f"sync {kind} returned an awaitable; declare it with async def")
-    return result
 
 
 class DispatchTree:
@@ -66,8 +45,13 @@ class DispatchTree:
             error_handler=error_handler,
         )
         self._lifecycle = BusLifecycle()
-        self._event_concurrency = event_concurrency
-        self._event_tasks: set[asyncio.Task[Any]] = set()
+        self._event_publisher = EventPublisher(
+            registry=self._registry,
+            handler_runtime=self._handler_runtime,
+            lifecycle=self._lifecycle,
+            event_concurrency=event_concurrency,
+            run_dispatch=self._run_dispatch,
+        )
 
     def register_command_handler(self, message_type: type[Any], handler: Any) -> None:
         self._registry.register_command_handler(message_type, handler)
@@ -87,22 +71,8 @@ class DispatchTree:
 
     async def _send(self, command: Any) -> Any:
         runtime_command = as_runtime_message(command)
-        payload = payload_of(runtime_command)
-        metadata = runtime_command.metadata
         handler = self._registry.get_command_handler(message_type_of(runtime_command))
         dispatch_id = new_dispatch_id()
-        started = perf_counter()
-        await self._deliver_trace(
-            DispatchStarted(
-                message=payload,
-                metadata=metadata,
-                message_type=type(payload),
-                operation="send",
-                timestamp=datetime.now(),
-                dispatch_id=dispatch_id,
-                handler_count=1,
-            )
-        )
 
         async def final_handler(message: Any) -> Any:
             outcome = await self._handler_runtime.invoke(
@@ -111,8 +81,52 @@ class DispatchTree:
                 operation="send",
                 dispatch_id=dispatch_id,
             )
-            await self._publish_events(outcome.emitted_events)
+            failures: list[Exception] = []
+            for emitted_event in outcome.emitted_events:
+                try:
+                    await self._event_publisher.publish_events((emitted_event,))
+                except EventPublicationError as exc:
+                    failures.extend(exc.failures)
+                except Exception as exc:
+                    failures.append(exc)
+            if failures:
+                raise EventPublicationError(failures)
             return outcome.result
+
+        return await self._run_dispatch(
+            runtime_command,
+            operation="send",
+            dispatch_id=dispatch_id,
+            handler_count=1,
+            final_handler=final_handler,
+        )
+
+    async def publish(self, event: Any) -> None:
+        await self._event_publisher.publish(event)
+
+    async def _run_dispatch(
+        self,
+        message: RuntimeMessage,
+        *,
+        operation: Literal["send", "publish"],
+        dispatch_id: str,
+        handler_count: int,
+        final_handler: Callable[[Any], Awaitable[Any]],
+    ) -> Any:
+        payload = payload_of(message)
+        metadata = message.metadata
+        started = perf_counter()
+        await self._deliver_trace(
+            DispatchStarted(
+                message=payload,
+                metadata=metadata,
+                message_type=type(payload),
+                operation=operation,
+                timestamp=datetime.now(),
+                dispatch_id=dispatch_id,
+                handler_count=handler_count,
+            )
+        )
 
         pipeline = compose_middleware(self._middleware, final_handler)
         try:
@@ -121,9 +135,9 @@ class DispatchTree:
             await self._notify_dispatch_finished(
                 payload=payload,
                 metadata=metadata,
-                operation="send",
+                operation=operation,
                 dispatch_id=dispatch_id,
-                handler_count=1,
+                handler_count=handler_count,
                 started=started,
                 success=False,
             )
@@ -132,240 +146,13 @@ class DispatchTree:
         await self._notify_dispatch_finished(
             payload=payload,
             metadata=metadata,
-            operation="send",
+            operation=operation,
             dispatch_id=dispatch_id,
-            handler_count=1,
+            handler_count=handler_count,
             started=started,
             success=True,
         )
         return result
-
-    async def publish(self, event: Any) -> None:
-        token = await self._lifecycle.enter_publish()
-        try:
-            await self._publish_events((as_runtime_message(event),))
-        finally:
-            await self._lifecycle.leave_dispatch(token)
-
-    async def _publish_events(self, events: Sequence[RuntimeMessage]) -> None:
-        if self._event_concurrency == "sequential":
-            await self._publish_events_sequential(events)
-        else:
-            await self._publish_events_concurrent(events)
-
-    async def _publish_events_sequential(self, events: Sequence[RuntimeMessage]) -> None:
-        pending = deque(events)
-        failures: list[Exception] = []
-
-        while pending:
-            event = pending.popleft()
-            follow_ups: list[RuntimeMessage] = []
-
-            async def collect(
-                outcome: HandlerOutcome, target: list[RuntimeMessage] = follow_ups
-            ) -> None:
-                target.extend(outcome.emitted_events)
-
-            try:
-                await self._publish_admitted_event(event, on_outcome=collect)
-            except EventPublicationError as exc:
-                failures.extend(exc.failures)
-            except BusDrainingError:
-                raise
-            except Exception as exc:
-                failures.append(exc)
-            pending.extend(follow_ups)
-
-        if failures:
-            raise EventPublicationError(failures)
-
-    async def _publish_events_concurrent(self, events: Sequence[RuntimeMessage]) -> None:
-        tasks = [self._create_event_task(self._publish_concurrent_event(event)) for event in events]
-        failures = await self._collect_publication_failures(tasks)
-        for failure in failures:
-            if isinstance(failure, BusDrainingError):
-                raise failure
-        if failures:
-            raise EventPublicationError(failures)
-
-    async def _publish_concurrent_event(self, event: RuntimeMessage) -> None:
-        follow_up_tasks: list[asyncio.Task[None]] = []
-
-        async def schedule(outcome: HandlerOutcome) -> None:
-            follow_up_tasks.extend(
-                self._create_event_task(self._publish_concurrent_event(emitted_event))
-                for emitted_event in outcome.emitted_events
-            )
-
-        direct_failures: list[Exception] = []
-        try:
-            await self._publish_admitted_event(event, on_outcome=schedule)
-        except EventPublicationError as exc:
-            direct_failures.extend(exc.failures)
-        except BusDrainingError:
-            raise
-        except Exception as exc:
-            direct_failures.append(exc)
-
-        follow_up_failures = await self._collect_publication_failures(follow_up_tasks)
-        failures = direct_failures + follow_up_failures
-        if failures:
-            raise EventPublicationError(failures)
-
-    async def _collect_publication_failures(
-        self, tasks: Sequence[asyncio.Task[None]]
-    ) -> list[Exception]:
-        failures: list[Exception] = []
-        for task in asyncio.as_completed(tasks):
-            try:
-                await task
-            except EventPublicationError as exc:
-                failures.extend(exc.failures)
-            except Exception as exc:
-                failures.append(exc)
-        return failures
-
-    async def _publish_admitted_event(
-        self,
-        event: RuntimeMessage,
-        *,
-        on_outcome: OutcomeCallback,
-    ) -> None:
-        token = await self._lifecycle.enter_publish()
-        try:
-            await self._publish_one_event(event, on_outcome=on_outcome)
-        finally:
-            await self._lifecycle.leave_dispatch(token)
-
-    async def _publish_one_event(
-        self,
-        runtime_event: RuntimeMessage,
-        *,
-        on_outcome: OutcomeCallback,
-    ) -> None:
-        payload = payload_of(runtime_event)
-        metadata = runtime_event.metadata
-        handlers = self._registry.get_event_handlers(message_type_of(runtime_event))
-        dispatch_id = new_dispatch_id()
-        started = perf_counter()
-        await self._deliver_trace(
-            DispatchStarted(
-                message=payload,
-                metadata=metadata,
-                message_type=type(payload),
-                operation="publish",
-                timestamp=datetime.now(),
-                dispatch_id=dispatch_id,
-                handler_count=len(handlers),
-            )
-        )
-
-        async def final_handler(message: Any) -> None:
-            failures = await self._dispatch_event_handlers(
-                handlers,
-                runtime_event,
-                dispatch_id=dispatch_id,
-                on_outcome=on_outcome,
-            )
-            if failures:
-                raise EventPublicationError(failures)
-
-        pipeline = compose_middleware(self._middleware, final_handler)
-        try:
-            await pipeline(payload)
-        except Exception:
-            await self._notify_dispatch_finished(
-                payload=payload,
-                metadata=metadata,
-                operation="publish",
-                dispatch_id=dispatch_id,
-                handler_count=len(handlers),
-                started=started,
-                success=False,
-            )
-            raise
-
-        await self._notify_dispatch_finished(
-            payload=payload,
-            metadata=metadata,
-            operation="publish",
-            dispatch_id=dispatch_id,
-            handler_count=len(handlers),
-            started=started,
-            success=True,
-        )
-
-    async def _dispatch_event_handlers(
-        self,
-        handlers: Sequence[RegisteredHandler],
-        event: RuntimeMessage,
-        *,
-        dispatch_id: str,
-        on_outcome: OutcomeCallback,
-    ) -> list[Exception]:
-        if self._event_concurrency == "sequential":
-            return await self._dispatch_event_handlers_sequential(
-                handlers,
-                event,
-                dispatch_id=dispatch_id,
-                on_outcome=on_outcome,
-            )
-        return await self._dispatch_event_handlers_concurrent(
-            handlers,
-            event,
-            dispatch_id=dispatch_id,
-            on_outcome=on_outcome,
-        )
-
-    async def _dispatch_event_handlers_sequential(
-        self,
-        handlers: Sequence[RegisteredHandler],
-        event: RuntimeMessage,
-        *,
-        dispatch_id: str,
-        on_outcome: OutcomeCallback,
-    ) -> list[Exception]:
-        failures: list[Exception] = []
-        for handler in handlers:
-            try:
-                outcome = await self._handler_runtime.invoke(
-                    handler,
-                    event,
-                    operation="publish",
-                    dispatch_id=dispatch_id,
-                )
-                await on_outcome(outcome)
-            except Exception as exc:
-                failures.append(exc)
-        return failures
-
-    async def _dispatch_event_handlers_concurrent(
-        self,
-        handlers: Sequence[RegisteredHandler],
-        event: RuntimeMessage,
-        *,
-        dispatch_id: str,
-        on_outcome: OutcomeCallback,
-    ) -> list[Exception]:
-        tasks = [
-            self._create_event_task(
-                self._handler_runtime.invoke(
-                    handler,
-                    event,
-                    operation="publish",
-                    dispatch_id=dispatch_id,
-                )
-            )
-            for handler in handlers
-        ]
-        failures: list[Exception] = []
-        for task in asyncio.as_completed(tasks):
-            try:
-                outcome = await task
-                await on_outcome(outcome)
-            except Exception as exc:
-                failures.append(exc)
-        return failures
 
     async def _notify_dispatch_finished(
         self,
@@ -392,14 +179,6 @@ class DispatchTree:
             )
         )
 
-    def _create_event_task(
-        self, coroutine: Coroutine[Any, Any, TaskResult]
-    ) -> asyncio.Task[TaskResult]:
-        task = asyncio.create_task(coroutine)
-        self._event_tasks.add(task)
-        task.add_done_callback(self._event_tasks.discard)
-        return task
-
     async def _deliver_trace(self, event: object) -> None:
         for subscriber in self._subscribers:
             try:
@@ -414,16 +193,15 @@ class DispatchTree:
                 )
 
     async def _call_subscriber(self, subscriber: Subscriber, event: object) -> Any:
-        if _is_async_callable(subscriber):
+        if is_async_callable(subscriber):
             return await subscriber(event)
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(self._executor, subscriber, event)
-        return _raise_if_sync_callable_returned_awaitable(result, kind="subscriber")
+        return ensure_sync_result(result, kind="subscriber")
 
     async def aclose(self) -> None:
         await self._lifecycle.begin_close()
-        while self._event_tasks:
-            await asyncio.gather(*tuple(self._event_tasks), return_exceptions=True)
+        await self._event_publisher.drain()
         if self._owns_executor:
             self._executor.shutdown(wait=True)
         await self._lifecycle.finish_close()
