@@ -331,7 +331,7 @@ async def test_command_handler_can_emit_multiple_follow_up_events_in_order() -> 
 
 
 @pytest.mark.asyncio
-async def test_sequential_command_follow_up_events_finish_each_dispatch_tree_in_order() -> None:
+async def test_sequential_command_follow_up_events_use_breadth_first_order() -> None:
     bus = MessageBus(event_concurrency="sequential")
     seen: list[int] = []
 
@@ -350,11 +350,11 @@ async def test_sequential_command_follow_up_events_finish_each_dispatch_tree_in_
 
     await bus.send(root_add_user(name="ada"))
 
-    assert seen == [1, 10, 2]
+    assert seen == [1, 2, 10]
 
 
 @pytest.mark.asyncio
-async def test_concurrent_command_follow_up_events_finish_each_dispatch_tree_in_order() -> None:
+async def test_concurrent_command_follow_up_events_start_without_waiting_for_siblings() -> None:
     bus = MessageBus()
     seen: list[int] = []
 
@@ -373,7 +373,7 @@ async def test_concurrent_command_follow_up_events_finish_each_dispatch_tree_in_
 
     await bus.send(root_add_user(name="ada"))
 
-    assert seen == [1, 2]
+    assert seen == [2, 1]
 
 
 @pytest.mark.asyncio
