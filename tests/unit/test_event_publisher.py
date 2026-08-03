@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import cast
 
 import pytest
 
@@ -10,6 +11,7 @@ from dispatchbus.messages import (
     as_runtime_message,
     get_metadata,
     new_root_metadata,
+    payload_of,
 )
 from dispatchbus.observability import DispatchStarted
 from dispatchbus.registry import HandlerRegistry
@@ -143,3 +145,31 @@ def test_event_dispatch_outcome_exposes_handler_outcomes_and_failures() -> None:
 
     assert outcome.handler_outcomes == ()
     assert outcome.failures == ()
+
+
+@pytest.mark.asyncio
+async def test_event_publisher_uses_explicit_follow_up_callback_for_concurrent_dispatch() -> None:
+    registry = HandlerRegistry()
+    runtime = MessageRuntime(event_concurrency="concurrent")
+    published_follow_ups: list[object] = []
+
+    async def publish_follow_up_event(event: object) -> None:
+        published_follow_ups.append(event)
+
+    publisher = EventPublisher(
+        registry=registry,
+        runtime=runtime,
+        middleware=[],
+        subscribers=[],
+        publish_follow_up_event=publish_follow_up_event,
+    )
+
+    async def emitter(event: UserAdded, context) -> None:
+        if event.user_id == 1:
+            context.emit(UserAdded(user_id=2))
+
+    registry.register_event_handler(UserAdded, emitter)
+
+    await publisher.publish(UserAdded(user_id=1, _metadata=new_root_metadata()))
+
+    assert [cast(UserAdded, payload_of(event)).user_id for event in published_follow_ups] == [2]

@@ -267,6 +267,18 @@ During draining:
 
 The bus closes only after the full accepted dispatch tree has completed.
 
+## Dispatch chain limits
+
+Use `max_dispatch_chain_length` to reject runaway nested dispatch chains.
+
+```python
+bus = MessageBus(max_dispatch_chain_length=3)
+```
+
+The root dispatch counts as depth `1`. Nested `context.emit(...)`, `bus.publish(...)`, and
+`bus.send(...)` calls raise `MaxDispatchChainLengthExceededError` when they would exceed the
+configured limit.
+
 ## Outbox support
 
 `dispatchbus.outbox` includes protocol-based outbox building blocks:

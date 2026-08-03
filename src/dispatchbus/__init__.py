@@ -7,6 +7,7 @@ from dispatchbus.exceptions import (
     DuplicateCommandHandlerError,
     EventPublicationError,
     HandlerRegistrationError,
+    MaxDispatchChainLengthExceededError,
     NoCommandHandlerError,
 )
 from dispatchbus.messages import (
@@ -39,6 +40,7 @@ __all__ = [
     "HandlerFinished",
     "HandlerRegistrationError",
     "HandlerStarted",
+    "MaxDispatchChainLengthExceededError",
     "MessageBase",
     "MessageBus",
     "MessageMetadata",

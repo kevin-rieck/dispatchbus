@@ -11,6 +11,7 @@ from dispatchbus.exceptions import (
     BusUsageError,
     EventPublicationError,
     InvalidMessageError,
+    MaxDispatchChainLengthExceededError,
 )
 from dispatchbus.messages import (
     CommandBase,
@@ -44,6 +45,23 @@ class AddUser(CommandBase):
 
     def with_metadata(self, metadata: MessageMetadata) -> "AddUser":
         return AddUser(name=self.name, _metadata=metadata)
+
+
+@dataclass(frozen=True)
+class NestedAddUser(CommandBase):
+    message_name = "user.add.nested"
+
+    name: str
+    _metadata: MessageMetadata | None = None
+
+    @property
+    def metadata(self) -> MessageMetadata:
+        if self._metadata is None:
+            raise InvalidMessageError("NestedAddUser is unstamped")
+        return self._metadata
+
+    def with_metadata(self, metadata: MessageMetadata) -> "NestedAddUser":
+        return NestedAddUser(name=self.name, _metadata=metadata)
 
 
 @dataclass(frozen=True)
@@ -353,6 +371,126 @@ async def test_event_handler_can_emit_follow_up_events() -> None:
         "first:2",
         "second:2",
     ]
+
+
+@pytest.mark.asyncio
+async def test_max_dispatch_chain_length_rejects_emitted_follow_up_event() -> None:
+    bus = MessageBus(max_dispatch_chain_length=1)
+
+    async def handler(event: UserAdded, context) -> None:
+        if event.user_id == 1:
+            context.emit(UserAdded(user_id=2))
+
+    bus.register_event_handler(UserAdded, handler)
+
+    with pytest.raises(EventPublicationError) as exc_info:
+        await bus.publish(root_user_added(user_id=1))
+
+    assert isinstance(exc_info.value.failures[0], MaxDispatchChainLengthExceededError)
+
+
+@pytest.mark.asyncio
+async def test_max_dispatch_chain_length_rejects_nested_public_publish() -> None:
+    bus = MessageBus(max_dispatch_chain_length=1)
+
+    async def handler(event: UserAdded) -> None:
+        if event.user_id == 1:
+            await bus.publish(root_user_added(user_id=2))
+
+    bus.register_event_handler(UserAdded, handler)
+
+    with pytest.raises(EventPublicationError) as exc_info:
+        await bus.publish(root_user_added(user_id=1))
+
+    assert isinstance(exc_info.value.failures[0], MaxDispatchChainLengthExceededError)
+
+
+@pytest.mark.asyncio
+async def test_max_dispatch_chain_length_rejects_nested_public_send() -> None:
+    bus = MessageBus(max_dispatch_chain_length=1)
+
+    async def nested_command_handler(command: NestedAddUser) -> str:
+        return command.name.upper()
+
+    async def event_handler(event: UserAdded) -> None:
+        await bus.send(NestedAddUser(name="nested"))
+
+    async def command_handler(command: AddUser, context) -> str:
+        context.emit(UserAdded(user_id=1))
+        return command.name.upper()
+
+    bus.register_command_handler(AddUser, command_handler)
+    bus.register_command_handler(NestedAddUser, nested_command_handler)
+    bus.register_event_handler(UserAdded, event_handler)
+
+    with pytest.raises(EventPublicationError) as exc_info:
+        await bus.send(root_add_user(name="root"))
+
+    assert isinstance(exc_info.value.failures[0], MaxDispatchChainLengthExceededError)
+
+
+@pytest.mark.asyncio
+async def test_max_dispatch_chain_length_allows_one_nested_dispatch_at_limit_two() -> None:
+    bus = MessageBus(max_dispatch_chain_length=2)
+    seen: list[int] = []
+
+    async def handler(event: UserAdded, context) -> None:
+        seen.append(event.user_id)
+        if event.user_id == 1:
+            context.emit(UserAdded(user_id=2))
+        elif event.user_id == 2:
+            context.emit(UserAdded(user_id=3))
+
+    bus.register_event_handler(UserAdded, handler)
+
+    with pytest.raises(EventPublicationError) as exc_info:
+        await bus.publish(root_user_added(user_id=1))
+
+    assert seen == [1, 2]
+    assert any(
+        isinstance(failure, MaxDispatchChainLengthExceededError) and failure.attempted_depth == 3
+        for failure in exc_info.value.failures
+    )
+
+
+@pytest.mark.asyncio
+async def test_max_dispatch_chain_length_applies_in_concurrent_mode() -> None:
+    bus = MessageBus(max_dispatch_chain_length=1, event_concurrency="concurrent")
+
+    async def handler(event: UserAdded, context) -> None:
+        if event.user_id == 1:
+            context.emit(UserAdded(user_id=2))
+
+    bus.register_event_handler(UserAdded, handler)
+
+    with pytest.raises(EventPublicationError) as exc_info:
+        await bus.publish(root_user_added(user_id=1))
+
+    assert isinstance(exc_info.value.failures[0], MaxDispatchChainLengthExceededError)
+
+
+@pytest.mark.asyncio
+async def test_max_dispatch_chain_length_does_not_poison_later_root_dispatches() -> None:
+    bus = MessageBus(max_dispatch_chain_length=1)
+    seen: list[int] = []
+
+    async def rejecting_handler(event: UserAdded, context) -> None:
+        seen.append(event.user_id)
+        if event.user_id == 1:
+            context.emit(UserAdded(user_id=2))
+
+    async def later_root_handler(event: UserAdded) -> None:
+        seen.append(event.user_id)
+
+    bus.register_event_handler(UserAdded, rejecting_handler)
+    bus.register_event_handler(UserAdded, later_root_handler)
+
+    with pytest.raises(EventPublicationError):
+        await bus.publish(root_user_added(user_id=1))
+
+    await bus.publish(root_user_added(user_id=99))
+
+    assert seen == [1, 1, 99, 99]
 
 
 @pytest.mark.asyncio
