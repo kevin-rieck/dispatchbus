@@ -1,5 +1,6 @@
 import asyncio
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import partial
 
@@ -327,6 +328,52 @@ async def test_command_handler_can_emit_multiple_follow_up_events_in_order() -> 
 
     assert result == "ada"
     assert seen == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_sequential_command_follow_up_events_use_breadth_first_order() -> None:
+    bus = MessageBus(event_concurrency="sequential")
+    seen: list[int] = []
+
+    async def command_handler(command: AddUser, context) -> str:
+        context.emit(UserAdded(user_id=1))
+        context.emit(UserAdded(user_id=2))
+        return command.name
+
+    async def event_handler(event: UserAdded, context) -> None:
+        seen.append(event.user_id)
+        if event.user_id == 1:
+            context.emit(UserAdded(user_id=10))
+
+    bus.register_command_handler(AddUser, command_handler)
+    bus.register_event_handler(UserAdded, event_handler)
+
+    await bus.send(root_add_user(name="ada"))
+
+    assert seen == [1, 2, 10]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_command_follow_up_events_start_without_waiting_for_siblings() -> None:
+    bus = MessageBus()
+    seen: list[int] = []
+
+    async def command_handler(command: AddUser, context) -> str:
+        context.emit(UserAdded(user_id=1))
+        context.emit(UserAdded(user_id=2))
+        return command.name
+
+    async def event_handler(event: UserAdded) -> None:
+        if event.user_id == 1:
+            await asyncio.sleep(0.01)
+        seen.append(event.user_id)
+
+    bus.register_command_handler(AddUser, command_handler)
+    bus.register_event_handler(UserAdded, event_handler)
+
+    await bus.send(root_add_user(name="ada"))
+
+    assert seen == [2, 1]
 
 
 @pytest.mark.asyncio
@@ -663,8 +710,9 @@ async def test_send_emits_lifecycle_events_in_order() -> None:
         return command.name.upper()
 
     bus.register_command_handler(AddUser, handler)
+    command = root_add_user(name="ada")
 
-    result = await bus.send(root_add_user(name="ada"))
+    result = await bus.send(command)
 
     assert result == "ADA"
     assert [type(event) for event in seen] == [
@@ -673,11 +721,19 @@ async def test_send_emits_lifecycle_events_in_order() -> None:
         HandlerFinished,
         DispatchFinished,
     ]
+    assert all(event.message is command for event in seen)
+    assert all(event.metadata == command.metadata for event in seen)
+    assert all(event.message_type is AddUser for event in seen)
     assert all(event.operation == "send" for event in seen)
     dispatch_ids = {event.dispatch_id for event in seen}
     assert len(dispatch_ids) == 1
     assert seen[0].handler_count == 1
+    assert seen[1].handler is handler
+    assert seen[2].handler is handler
+    assert seen[1].handler_name == seen[2].handler_name
+    assert seen[2].duration_ms >= 0
     assert seen[3].success is True
+    assert seen[3].duration_ms >= 0
 
 
 @pytest.mark.asyncio
@@ -770,6 +826,33 @@ async def test_original_failures_preserve_when_emitted_publish_raises_error() ->
         "original boom",
         "mw boom",
     ]
+
+
+@pytest.mark.asyncio
+async def test_sequential_publish_drops_follow_up_events_when_middleware_fails_after_dispatch() -> (
+    None
+):
+    async def middleware(message, call_next):
+        result = await call_next(message)
+        if isinstance(message, UserAdded) and message.user_id == 1:
+            raise RuntimeError("mw boom")
+        return result
+
+    bus = MessageBus(middleware=[middleware], event_concurrency="sequential")
+    seen: list[int] = []
+
+    async def emitter(event: UserAdded, context) -> None:
+        seen.append(event.user_id)
+        if event.user_id == 1:
+            context.emit(UserAdded(user_id=2))
+
+    bus.register_event_handler(UserAdded, emitter)
+
+    with pytest.raises(EventPublicationError) as exc_info:
+        await bus.publish(root_user_added(user_id=1))
+
+    assert [str(failure) for failure in exc_info.value.failures] == ["mw boom"]
+    assert seen == [1]
 
 
 @pytest.mark.asyncio
@@ -929,6 +1012,28 @@ async def test_concurrent_handlers_publish_follow_up_events_without_waiting() ->
 
 
 @pytest.mark.asyncio
+async def test_added_subscriber_sees_command_and_follow_up_event_dispatches() -> None:
+    seen: list[str] = []
+
+    async def subscriber(event: object) -> None:
+        if isinstance(event, DispatchStarted):
+            seen.append(event.operation)
+
+    bus = MessageBus(event_concurrency="sequential")
+    bus.add_subscriber(subscriber)
+
+    async def command_handler(command: AddUser, context) -> str:
+        context.emit(UserAdded(user_id=len(command.name)))
+        return command.name
+
+    bus.register_command_handler(AddUser, command_handler)
+    bus.register_event_handler(UserAdded, lambda event: None)
+
+    assert await bus.send(root_add_user(name="ada")) == "ada"
+    assert seen == ["send", "publish"]
+
+
+@pytest.mark.asyncio
 async def test_subscribers_see_nested_follow_up_publishes_as_normal_dispatches() -> None:
     seen: list[tuple[str, str]] = []
 
@@ -1008,6 +1113,28 @@ async def test_sync_subscriber_receives_lifecycle_events() -> None:
 
     assert result == "ADA"
     assert seen == ["DispatchStarted", "HandlerStarted", "HandlerFinished", "DispatchFinished"]
+
+
+@pytest.mark.asyncio
+async def test_sync_handler_and_subscriber_use_the_caller_executor() -> None:
+    thread_ids: list[int] = []
+
+    def subscriber(event: object) -> None:
+        thread_ids.append(threading.get_ident())
+
+    def handler(command: AddUser) -> str:
+        thread_ids.append(threading.get_ident())
+        return command.name.upper()
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        bus = MessageBus(subscribers=[subscriber], executor=executor)
+        bus.register_command_handler(AddUser, handler)
+
+        assert await bus.send(root_add_user(name="ada")) == "ADA"
+        await bus.aclose()
+
+    assert len(thread_ids) == 5
+    assert len(set(thread_ids)) == 1
 
 
 def test_send_sync_runs_command_through_background_runtime() -> None:

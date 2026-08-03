@@ -5,7 +5,13 @@ from typing import Any, cast
 import pytest
 
 from dispatchbus.bus import MessageBus
-from dispatchbus.exceptions import BusUsageError, HandlerRegistrationError, InvalidMessageError
+from dispatchbus.dispatch_tree import EventConcurrency
+from dispatchbus.exceptions import (
+    BusDrainingError,
+    BusUsageError,
+    HandlerRegistrationError,
+    InvalidMessageError,
+)
 from dispatchbus.messages import (
     CommandBase,
     EventBase,
@@ -13,7 +19,6 @@ from dispatchbus.messages import (
     get_metadata,
     new_root_metadata,
 )
-from dispatchbus.runtime import EventConcurrency
 
 
 @dataclass(frozen=True)
@@ -62,28 +67,39 @@ class PlainUserAdded(EventBase):
     user_id: int
 
 
-def test_message_bus_uses_lifecycle_collaborator() -> None:
-    bus = MessageBus()
+@pytest.mark.asyncio
+async def test_message_bus_copies_mutable_configuration_collections() -> None:
+    middleware_seen: list[str] = []
+    added_subscriber_seen: list[object] = []
 
-    assert bus._lifecycle is not None
+    async def initial_middleware(message, call_next):
+        middleware_seen.append("initial")
+        return await call_next(message)
 
+    async def added_middleware(message, call_next):
+        middleware_seen.append("added")
+        return await call_next(message)
 
-def test_message_bus_uses_sync_bridge() -> None:
-    bus = MessageBus()
+    async def initial_subscriber(event: object) -> None:
+        pass
 
-    assert bus._sync_bridge is not None
+    async def added_subscriber(event: object) -> None:
+        added_subscriber_seen.append(event)
 
+    middleware_stack = [initial_middleware]
+    subscribers = [initial_subscriber]
+    bus = MessageBus(middleware=middleware_stack, subscribers=subscribers)
+    middleware_stack.append(added_middleware)
+    subscribers.append(added_subscriber)
 
-def test_message_bus_uses_event_publisher() -> None:
-    bus = MessageBus()
+    async def handler(command: AddUserCommand) -> str:
+        return command.name
 
-    assert bus._event_publisher is not None
+    bus.register_command_handler(AddUserCommand, handler)
 
-
-def test_message_bus_uses_command_dispatcher() -> None:
-    bus = MessageBus()
-
-    assert bus._command_dispatcher is not None
+    assert await bus.send(AddUserCommand(name="ada")) == "ada"
+    assert middleware_seen == ["initial"]
+    assert added_subscriber_seen == []
 
 
 def test_message_bus_event_concurrency_annotation_matches_runtime_type() -> None:
@@ -161,26 +177,75 @@ async def test_publish_plain_root_event_delivers_payload() -> None:
 
 @pytest.mark.asyncio
 async def test_async_context_manager() -> None:
+    async def handler(command: AddUserCommand) -> str:
+        return command.name
+
     async with MessageBus() as bus:
-        assert isinstance(bus, MessageBus)
-        assert bus._lifecycle._state.name == "OPEN"
-    assert bus._lifecycle._state.name == "CLOSED"
+        bus.register_command_handler(AddUserCommand, handler)
+        assert await bus.send(AddUserCommand(name="ada")) == "ada"
+
+    with pytest.raises(BusDrainingError, match="message bus is draining"):
+        await bus.send(AddUserCommand(name="grace"))
 
 
 def test_sync_context_manager() -> None:
+    def handler(command: AddUserCommand) -> str:
+        return command.name
+
     with MessageBus() as bus:
-        assert isinstance(bus, MessageBus)
-        assert bus._lifecycle._state.name == "OPEN"
-    assert bus._lifecycle._state.name == "CLOSED"
+        bus.register_command_handler(AddUserCommand, handler)
+        assert bus.send_sync(AddUserCommand(name="ada")) == "ada"
+
+    with pytest.raises(BusDrainingError, match="message bus is draining"):
+        bus.send_sync(AddUserCommand(name="grace"))
 
 
-def test_custom_executor() -> None:
+def test_caller_executor_remains_usable_after_bus_closes() -> None:
     from concurrent.futures import ThreadPoolExecutor
 
     executor = ThreadPoolExecutor(max_workers=2)
     bus = MessageBus(executor=executor)
-    assert bus._runtime._executor is executor
-    assert bus._runtime._owns_executor is False
+
     bus.close()
-    assert bus._runtime._executor is executor
+
+    assert executor.submit(lambda: "caller-owned").result() == "caller-owned"
     executor.shutdown(wait=True)
+
+
+def test_bus_shuts_down_internally_created_executor(monkeypatch: pytest.MonkeyPatch) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    executor = ThreadPoolExecutor(max_workers=1)
+    monkeypatch.setattr("dispatchbus.dispatch_tree.ThreadPoolExecutor", lambda: executor)
+    bus = MessageBus()
+
+    bus.close()
+
+    with pytest.raises(RuntimeError, match="cannot schedule new futures after shutdown"):
+        executor.submit(lambda: None)
+
+
+@pytest.mark.asyncio
+async def test_aclose_waits_for_concurrent_event_tasks_to_finish() -> None:
+    import asyncio
+
+    bus = MessageBus(event_concurrency="concurrent")
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def handler(event: PlainUserAdded) -> None:
+        started.set()
+        await release.wait()
+
+    bus.register_event_handler(PlainUserAdded, handler)
+
+    publish_task = asyncio.create_task(bus.publish(PlainUserAdded(user_id=1)))
+    await started.wait()
+    close_task = asyncio.create_task(bus.aclose())
+    await asyncio.sleep(0)
+
+    assert not close_task.done()
+
+    release.set()
+    await publish_task
+    await close_task

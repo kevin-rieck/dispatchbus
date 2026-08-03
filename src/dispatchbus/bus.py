@@ -3,15 +3,12 @@ from collections.abc import Sequence
 from concurrent.futures import Executor
 from typing import Any
 
-from dispatchbus.command_dispatch import CommandDispatcher
-from dispatchbus.event_publisher import EventPublisher
+from dispatchbus.dispatch_tree import DispatchTree, EventConcurrency
 from dispatchbus.exceptions import BusUsageError
-from dispatchbus.lifecycle import BusLifecycle
+from dispatchbus.handler_runtime import ErrorHandler
 from dispatchbus.messages import CommandBase, EventBase, as_runtime_message
 from dispatchbus.middleware import Middleware
 from dispatchbus.observability import Subscriber
-from dispatchbus.registry import HandlerRegistry
-from dispatchbus.runtime import ErrorHandler, EventConcurrency, MessageRuntime
 from dispatchbus.sync_bridge import SyncBridge
 
 
@@ -25,29 +22,14 @@ class MessageBus:
         executor: Executor | None = None,
         error_handler: ErrorHandler | None = None,
     ) -> None:
-        self._registry = HandlerRegistry()
-        self._runtime = MessageRuntime(
+        self._dispatch_tree = DispatchTree(
+            middleware,
             event_concurrency=event_concurrency,
+            subscribers=subscribers,
             executor=executor,
             error_handler=error_handler,
         )
-        self._middleware = list(middleware or [])
-        self._subscribers = list(subscribers or [])
-        self._lifecycle = BusLifecycle()
         self._sync_bridge = SyncBridge()
-        self._event_publisher = EventPublisher(
-            registry=self._registry,
-            runtime=self._runtime,
-            middleware=self._middleware,
-            subscribers=self._subscribers,
-        )
-        self._command_dispatcher = CommandDispatcher(
-            registry=self._registry,
-            runtime=self._runtime,
-            middleware=self._middleware,
-            subscribers=self._subscribers,
-            publish_event=self._event_publisher.publish,
-        )
 
     async def __aenter__(self) -> "MessageBus":
         return self
@@ -62,35 +44,21 @@ class MessageBus:
         self.close()
 
     def register_command_handler(self, message_type: type[Any], handler: Any) -> None:
-        self._registry.register_command_handler(message_type, handler)
+        self._dispatch_tree.register_command_handler(message_type, handler)
 
     def register_event_handler(self, message_type: type[Any], handler: Any) -> None:
-        self._registry.register_event_handler(message_type, handler)
+        self._dispatch_tree.register_event_handler(message_type, handler)
 
     def add_subscriber(self, subscriber: Subscriber) -> None:
-        self._subscribers.append(subscriber)
+        self._dispatch_tree.add_subscriber(subscriber)
 
     async def send(self, command: Any) -> Any:
         self._require_command_instance(command)
-        token = await self._lifecycle.enter_send()
-        try:
-            return await self._send_impl(as_runtime_message(command))
-        finally:
-            await self._lifecycle.leave_dispatch(token)
-
-    async def _send_impl(self, command: Any) -> Any:
-        return await self._command_dispatcher.send(command)
+        return await self._dispatch_tree.send(as_runtime_message(command))
 
     async def publish(self, event: Any) -> None:
         self._require_event_instance(event)
-        token = await self._lifecycle.enter_publish()
-        try:
-            await self._publish_impl(as_runtime_message(event))
-        finally:
-            await self._lifecycle.leave_dispatch(token)
-
-    async def _publish_impl(self, event: Any) -> None:
-        await self._event_publisher.publish(event)
+        await self._dispatch_tree.publish(as_runtime_message(event))
 
     def send_sync(self, command: Any, timeout: float | None = None) -> Any:
         if self._in_running_loop_thread():
@@ -124,9 +92,7 @@ class MessageBus:
         await self._sync_bridge.aclose()
 
     async def _drain_and_close_runtime(self) -> None:
-        await self._lifecycle.begin_close()
-        await self._runtime.aclose()
-        await self._lifecycle.finish_close()
+        await self._dispatch_tree.aclose()
 
     def _require_command_instance(self, message: Any) -> None:
         if not isinstance(message, CommandBase):

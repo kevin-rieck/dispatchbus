@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from dispatchbus.callable_runtime import is_async_callable
 from dispatchbus.exceptions import (
     DuplicateCommandHandlerError,
     HandlerRegistrationError,
@@ -20,12 +21,6 @@ class RegisteredHandler:
     handler: Callable[..., Any]
     is_async: bool
     context_style: ContextStyle
-
-
-def _is_async_callable(value: Callable[..., Any]) -> bool:
-    return inspect.iscoroutinefunction(value) or (
-        callable(value) and inspect.iscoroutinefunction(value.__call__)
-    )
 
 
 def _context_style(value: Callable[..., Any]) -> ContextStyle:
@@ -58,7 +53,7 @@ def _context_style(value: Callable[..., Any]) -> ContextStyle:
 def _register_handler(handler: Callable[..., Any]) -> RegisteredHandler:
     return RegisteredHandler(
         handler=handler,
-        is_async=_is_async_callable(handler),
+        is_async=is_async_callable(handler),
         context_style=_context_style(handler),
     )
 
