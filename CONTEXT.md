@@ -20,6 +20,10 @@ _Avoid_: Notification, signal
 A root command or event plus every follow-up event emitted by handlers during that accepted dispatch.
 _Avoid_: Call graph, workflow
 
+**Dispatch depth**:
+The active nesting level of a command or event within a dispatch tree. The root has depth one; sibling events do not increase one another's depth.
+_Avoid_: Dispatch chain length, tree size
+
 **Follow-up event**:
 An event emitted from a handler through the event context and causally linked to the handler's message.
 _Avoid_: Nested event, sub-event
