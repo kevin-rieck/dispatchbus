@@ -1,7 +1,10 @@
 import asyncio
 import contextvars
 import threading
+from collections.abc import AsyncIterator
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from enum import Enum, auto
+from typing import Literal
 
 from dispatchbus.exceptions import BusDrainingError
 
@@ -24,8 +27,19 @@ class BusLifecycle:
             default=0,
         )
 
-    async def enter_send(self) -> contextvars.Token[int]:
-        return self._enter("send")
+    def admit_command(self) -> AbstractAsyncContextManager[None]:
+        return self._admit("send")
+
+    def admit_event(self) -> AbstractAsyncContextManager[None]:
+        return self._admit("publish")
+
+    @asynccontextmanager
+    async def _admit(self, operation: Literal["send", "publish"]) -> AsyncIterator[None]:
+        token = self._enter(operation)
+        try:
+            yield
+        finally:
+            self._leave_dispatch(token)
 
     async def enter_publish(self) -> contextvars.Token[int]:
         return self._enter("publish")
@@ -44,6 +58,9 @@ class BusLifecycle:
         return self._accepted_dispatch_depth.set(current_depth + 1)
 
     async def leave_dispatch(self, token: contextvars.Token[int]) -> None:
+        self._leave_dispatch(token)
+
+    def _leave_dispatch(self, token: contextvars.Token[int]) -> None:
         self._accepted_dispatch_depth.reset(token)
         with self._state_lock:
             self._in_flight_dispatches -= 1

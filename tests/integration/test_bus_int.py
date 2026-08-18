@@ -1858,6 +1858,48 @@ async def test_aclose_waits_for_accepted_send_to_finish() -> None:
 
 
 @pytest.mark.asyncio
+async def test_aclose_completes_after_command_handler_failure() -> None:
+    bus = MessageBus()
+
+    async def handler(command: AddUser) -> str:
+        raise ValueError("command failed")
+
+    bus.register_command_handler(AddUser, handler)
+
+    with pytest.raises(ValueError, match="command failed"):
+        await bus.send(root_add_user(name="ada"))
+
+    await asyncio.wait_for(bus.aclose(), timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_aclose_completes_after_command_cancellation() -> None:
+    bus = MessageBus()
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def handler(command: AddUser) -> str:
+        started.set()
+        await release.wait()
+        return command.name
+
+    bus.register_command_handler(AddUser, handler)
+
+    send_task = asyncio.create_task(bus.send(root_add_user(name="ada")))
+    await started.wait()
+    close_task = asyncio.create_task(bus.aclose())
+    await asyncio.sleep(0)
+    assert close_task.done() is False
+
+    send_task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await send_task
+
+    await asyncio.wait_for(close_task, timeout=1)
+
+
+@pytest.mark.asyncio
 async def test_aclose_allows_follow_up_events_from_accepted_work() -> None:
     bus = MessageBus(event_concurrency="sequential")
     started = asyncio.Event()

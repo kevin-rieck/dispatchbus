@@ -84,11 +84,8 @@ class DispatchTree:
         self._subscribers.append(subscriber)
 
     async def send(self, command: Any) -> Any:
-        token = await self._lifecycle.enter_send()
-        try:
+        async with self._lifecycle.admit_command():
             return await self._send(command)
-        finally:
-            await self._lifecycle.leave_dispatch(token)
 
     async def _send(self, command: Any) -> Any:
         runtime_command = as_runtime_message(command)
