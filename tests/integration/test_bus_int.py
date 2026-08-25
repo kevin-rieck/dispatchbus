@@ -1943,8 +1943,11 @@ async def test_aclose_allows_follow_up_events_from_accepted_work() -> None:
 
 
 @pytest.mark.asyncio
-async def test_aclose_allows_event_originated_follow_up_events_from_accepted_work() -> None:
-    bus = MessageBus(event_concurrency="sequential")
+@pytest.mark.parametrize("event_concurrency", ["sequential", "concurrent"])
+async def test_aclose_allows_event_originated_follow_up_events_from_accepted_work(
+    event_concurrency: str,
+) -> None:
+    bus = MessageBus(event_concurrency=event_concurrency)
     root_started = asyncio.Event()
     release_root = asyncio.Event()
     nested_started = asyncio.Event()
@@ -1987,6 +1990,100 @@ async def test_aclose_allows_event_originated_follow_up_events_from_accepted_wor
     await publish_task
     await close_task
     assert seen == ["root:done", "nested:done"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("event_concurrency", ["sequential", "concurrent"])
+async def test_event_handler_can_explicitly_publish_during_drain(event_concurrency: str) -> None:
+    bus = MessageBus(event_concurrency=event_concurrency)
+    root_started = asyncio.Event()
+    release_root = asyncio.Event()
+    seen: list[int] = []
+
+    async def root_handler(event: UserAdded) -> None:
+        if event.user_id != 1:
+            return
+        root_started.set()
+        await release_root.wait()
+        await bus.publish(root_user_added(user_id=2))
+
+    async def nested_handler(event: UserAdded) -> None:
+        if event.user_id == 2:
+            seen.append(event.user_id)
+
+    bus.register_event_handler(UserAdded, root_handler)
+    bus.register_event_handler(UserAdded, nested_handler)
+
+    publish_task = asyncio.create_task(bus.publish(root_user_added(user_id=1)))
+    await root_started.wait()
+
+    close_task = asyncio.create_task(bus.aclose())
+    await asyncio.sleep(0)
+    assert close_task.done() is False
+
+    release_root.set()
+
+    await publish_task
+    await close_task
+    assert seen == [2]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("event_concurrency", ["sequential", "concurrent"])
+async def test_event_child_task_can_publish_after_parent_handler_finishes_during_drain(
+    event_concurrency: str,
+) -> None:
+    bus = MessageBus(event_concurrency=event_concurrency)
+    root_started = asyncio.Event()
+    child_allowed = asyncio.Event()
+    nested_started = asyncio.Event()
+    release_nested = asyncio.Event()
+    child_event_started = asyncio.Event()
+    child_task: asyncio.Task[None] | None = None
+
+    async def root_handler(event: UserAdded, context) -> None:
+        nonlocal child_task
+        if event.user_id != 1:
+            return
+
+        async def detached() -> None:
+            await child_allowed.wait()
+            await bus.publish(root_user_added(user_id=3))
+
+        child_task = asyncio.create_task(detached())
+        root_started.set()
+        context.emit(UserAdded(user_id=2))
+
+    async def nested_handler(event: UserAdded) -> None:
+        if event.user_id != 2:
+            return
+        nested_started.set()
+        await release_nested.wait()
+
+    async def child_handler(event: UserAdded) -> None:
+        if event.user_id == 3:
+            child_event_started.set()
+
+    bus.register_event_handler(UserAdded, root_handler)
+    bus.register_event_handler(UserAdded, nested_handler)
+    bus.register_event_handler(UserAdded, child_handler)
+
+    publish_task = asyncio.create_task(bus.publish(root_user_added(user_id=1)))
+    await root_started.wait()
+    await nested_started.wait()
+
+    close_task = asyncio.create_task(bus.aclose())
+    await asyncio.sleep(0)
+    assert close_task.done() is False
+
+    child_allowed.set()
+    await child_event_started.wait()
+    assert child_task is not None
+    await child_task
+
+    release_nested.set()
+    await publish_task
+    await close_task
 
 
 @pytest.mark.asyncio
