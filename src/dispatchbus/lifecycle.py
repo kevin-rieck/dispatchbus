@@ -41,9 +41,6 @@ class BusLifecycle:
         finally:
             self._leave_dispatch(token)
 
-    async def enter_publish(self) -> contextvars.Token[int]:
-        return self._enter("publish")
-
     def _enter(self, operation: str) -> contextvars.Token[int]:
         current_depth = self._accepted_dispatch_depth.get()
         with self._state_lock:
@@ -56,9 +53,6 @@ class BusLifecycle:
             self._in_flight_dispatches += 1
             self._drained.clear()
         return self._accepted_dispatch_depth.set(current_depth + 1)
-
-    async def leave_dispatch(self, token: contextvars.Token[int]) -> None:
-        self._leave_dispatch(token)
 
     def _leave_dispatch(self, token: contextvars.Token[int]) -> None:
         self._accepted_dispatch_depth.reset(token)
