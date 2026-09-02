@@ -142,14 +142,17 @@ class DispatchTree:
                 )
 
             try:
-                if first_event_admitted:
-                    first_event_admitted = False
-                    await self._publish_one_event(queued_event.event, on_outcome=collect)
-                elif queued_event.parent_context is None:
-                    await self._publish_admitted_event(queued_event.event, on_outcome=collect)
+                already_admitted = first_event_admitted
+                first_event_admitted = False
+                if queued_event.parent_context is None:
+                    await self._publish_event(
+                        queued_event.event,
+                        on_outcome=collect,
+                        already_admitted=already_admitted,
+                    )
                 else:
                     task = self._create_event_task(
-                        self._publish_admitted_event(queued_event.event, on_outcome=collect),
+                        self._publish_event(queued_event.event, on_outcome=collect),
                         context=queued_event.parent_context,
                     )
                     await task
@@ -197,10 +200,11 @@ class DispatchTree:
 
         direct_failures: list[Exception] = []
         try:
-            if already_admitted:
-                await self._publish_one_event(event, on_outcome=schedule)
-            else:
-                await self._publish_admitted_event(event, on_outcome=schedule)
+            await self._publish_event(
+                event,
+                on_outcome=schedule,
+                already_admitted=already_admitted,
+            )
         except EventPublicationError as exc:
             direct_failures.extend(exc.failures)
         except BusDrainingError:
@@ -226,14 +230,18 @@ class DispatchTree:
                 failures.append(exc)
         return failures
 
-    async def _publish_admitted_event(
+    async def _publish_event(
         self,
         event: RuntimeMessage,
         *,
         on_outcome: OutcomeCallback,
+        already_admitted: bool = False,
     ) -> None:
-        async with self._lifecycle.admit_event():
+        if already_admitted:
             await self._publish_one_event(event, on_outcome=on_outcome)
+        else:
+            async with self._lifecycle.admit_event():
+                await self._publish_one_event(event, on_outcome=on_outcome)
 
     async def _publish_one_event(
         self,
