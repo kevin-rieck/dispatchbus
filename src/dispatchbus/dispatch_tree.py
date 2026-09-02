@@ -4,6 +4,7 @@ import logging
 from collections import deque
 from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from concurrent.futures import Executor, ThreadPoolExecutor
+from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime
 from time import perf_counter
@@ -26,7 +27,8 @@ from dispatchbus.registry import HandlerRegistry, RegisteredHandler
 
 EventConcurrency = Literal["concurrent", "sequential"]
 OutcomeCallback = Callable[[HandlerOutcome], Awaitable[None]]
-PublishEvents = Callable[[Sequence[RuntimeMessage], bool], Awaitable[None]]
+EventAdmission = AbstractAsyncContextManager[None]
+PublishEvents = Callable[[Sequence["_QueuedEvent"]], Awaitable[None]]
 TaskResult = TypeVar("TaskResult")
 logger = logging.getLogger("dispatchbus")
 
@@ -35,6 +37,7 @@ logger = logging.getLogger("dispatchbus")
 class _QueuedEvent:
     event: RuntimeMessage
     parent_context: contextvars.Context | None = None
+    admission: EventAdmission | None = None
 
 
 @dataclass(frozen=True)
@@ -107,7 +110,9 @@ class DispatchTree:
                 operation="send",
                 dispatch_id=dispatch_id,
             )
-            await self._publish_events_impl(outcome.emitted_events, False)
+            await self._publish_events_impl(
+                tuple(_QueuedEvent(event) for event in outcome.emitted_events)
+            )
             return outcome.result
 
         return await self._run_dispatch(
@@ -121,12 +126,10 @@ class DispatchTree:
     async def publish(self, event: Any) -> None:
         runtime_event = as_runtime_message(event)
         async with self._lifecycle.admit_event():
-            await self._publish_events_impl((runtime_event,), True)
+            await self._publish_events_impl((_QueuedEvent(runtime_event, admission=nullcontext()),))
 
-    async def _publish_events_sequential(
-        self, events: Sequence[RuntimeMessage], first_event_admitted: bool = False
-    ) -> None:
-        pending = deque(_QueuedEvent(event) for event in events)
+    async def _publish_events_sequential(self, events: Sequence[_QueuedEvent]) -> None:
+        pending = deque(events)
         failures: list[Exception] = []
 
         while pending:
@@ -142,17 +145,19 @@ class DispatchTree:
                 )
 
             try:
-                already_admitted = first_event_admitted
-                first_event_admitted = False
                 if queued_event.parent_context is None:
                     await self._publish_event(
                         queued_event.event,
                         on_outcome=collect,
-                        already_admitted=already_admitted,
+                        admission=queued_event.admission,
                     )
                 else:
                     task = self._create_event_task(
-                        self._publish_event(queued_event.event, on_outcome=collect),
+                        self._publish_event(
+                            queued_event.event,
+                            on_outcome=collect,
+                            admission=queued_event.admission,
+                        ),
                         context=queued_event.parent_context,
                     )
                     await task
@@ -169,16 +174,10 @@ class DispatchTree:
         if failures:
             raise EventPublicationError(failures)
 
-    async def _publish_events_concurrent(
-        self, events: Sequence[RuntimeMessage], first_event_admitted: bool = False
-    ) -> None:
+    async def _publish_events_concurrent(self, events: Sequence[_QueuedEvent]) -> None:
         tasks = [
-            self._create_event_task(
-                self._publish_concurrent_event(
-                    event, already_admitted=first_event_admitted and index == 0
-                )
-            )
-            for index, event in enumerate(events)
+            self._create_event_task(self._publish_concurrent_event(queued_event))
+            for queued_event in events
         ]
         failures = await self._collect_publication_failures(tasks)
         for failure in failures:
@@ -187,23 +186,21 @@ class DispatchTree:
         if failures:
             raise EventPublicationError(failures)
 
-    async def _publish_concurrent_event(
-        self, event: RuntimeMessage, *, already_admitted: bool = False
-    ) -> None:
+    async def _publish_concurrent_event(self, queued_event: _QueuedEvent) -> None:
         follow_up_tasks: list[asyncio.Task[None]] = []
 
         async def schedule(outcome: HandlerOutcome) -> None:
             follow_up_tasks.extend(
-                self._create_event_task(self._publish_concurrent_event(emitted_event))
+                self._create_event_task(self._publish_concurrent_event(_QueuedEvent(emitted_event)))
                 for emitted_event in outcome.emitted_events
             )
 
         direct_failures: list[Exception] = []
         try:
             await self._publish_event(
-                event,
+                queued_event.event,
                 on_outcome=schedule,
-                already_admitted=already_admitted,
+                admission=queued_event.admission,
             )
         except EventPublicationError as exc:
             direct_failures.extend(exc.failures)
@@ -235,13 +232,10 @@ class DispatchTree:
         event: RuntimeMessage,
         *,
         on_outcome: OutcomeCallback,
-        already_admitted: bool = False,
+        admission: EventAdmission | None = None,
     ) -> None:
-        if already_admitted:
+        async with admission or self._lifecycle.admit_event():
             await self._publish_one_event(event, on_outcome=on_outcome)
-        else:
-            async with self._lifecycle.admit_event():
-                await self._publish_one_event(event, on_outcome=on_outcome)
 
     async def _publish_one_event(
         self,
