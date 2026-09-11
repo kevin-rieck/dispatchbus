@@ -1,6 +1,7 @@
 import asyncio
-from collections.abc import Sequence
-from concurrent.futures import Executor
+import threading
+from collections.abc import Coroutine, Sequence
+from concurrent.futures import Executor, Future
 from typing import Any
 
 from dispatchbus.dispatch_tree import DispatchTree, EventConcurrency
@@ -30,6 +31,9 @@ class MessageBus:
             error_handler=error_handler,
         )
         self._sync_bridge = SyncBridge()
+        self._close_lock = threading.Lock()
+        self._close_future: Future[None] | None = None
+        self._sync_bridge_close_started = False
 
     async def __aenter__(self) -> "MessageBus":
         return self
@@ -80,19 +84,57 @@ class MessageBus:
                 "close() cannot run inside an active event loop; "
                 "use await bus.aclose() from async code"
             )
-        if self._sync_bridge._loop is None:
-            asyncio.run(self._drain_and_close_runtime())
-            return
-
-        self._sync_bridge.run(self._drain_and_close_runtime())
-        self._sync_bridge.close()
+        asyncio.run(self.aclose())
 
     async def aclose(self) -> None:
-        await self._drain_and_close_runtime()
-        await self._sync_bridge.aclose()
+        with self._close_lock:
+            if self._close_future is None:
+                close_operation = self._dispatch_tree.aclose()
+                self._close_future = Future()
+                asyncio.create_task(self._close_runtime(close_operation))
+            close_future = self._close_future
 
-    async def _drain_and_close_runtime(self) -> None:
-        await self._dispatch_tree.aclose()
+        close_error: BaseException | None = None
+        try:
+            await asyncio.shield(asyncio.wrap_future(close_future))
+        except BaseException as exc:
+            close_error = exc
+        if threading.current_thread() is not self._sync_bridge._thread and not isinstance(
+            close_error, asyncio.CancelledError
+        ):
+            try:
+                await asyncio.to_thread(self._close_sync_bridge_once)
+            except BaseException:
+                if close_error is None:
+                    raise
+        if close_error is not None:
+            raise close_error
+
+    async def _close_runtime(self, close_operation: Coroutine[Any, Any, None]) -> None:
+        assert self._close_future is not None
+        close_future = self._close_future
+        close_error: BaseException | None = None
+        try:
+            await close_operation
+        except BaseException as exc:
+            close_error = exc
+        if threading.current_thread() is not self._sync_bridge._thread:
+            try:
+                await asyncio.to_thread(self._close_sync_bridge_once)
+            except BaseException as exc:
+                if close_error is None:
+                    close_error = exc
+        if close_error is not None:
+            close_future.set_exception(close_error)
+        else:
+            close_future.set_result(None)
+
+    def _close_sync_bridge_once(self) -> None:
+        with self._close_lock:
+            if self._sync_bridge_close_started or self._sync_bridge._loop is None:
+                return
+            self._sync_bridge_close_started = True
+        self._sync_bridge.close()
 
     def _require_command_instance(self, message: Any) -> None:
         if not isinstance(message, CommandBase):

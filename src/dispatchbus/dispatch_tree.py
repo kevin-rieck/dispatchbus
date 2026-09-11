@@ -403,9 +403,10 @@ class DispatchTree:
         while self._event_tasks:
             await asyncio.gather(*tuple(self._event_tasks), return_exceptions=True)
 
-    async def aclose(self) -> None:
-        await self._lifecycle.begin_close()
+    def aclose(self) -> Coroutine[Any, Any, None]:
+        return self._lifecycle.close(self._cleanup_runtime)
+
+    async def _cleanup_runtime(self) -> None:
         await self._drain()
         if self._owns_executor:
             self._executor.shutdown(wait=True)
-        await self._lifecycle.finish_close()
