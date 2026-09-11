@@ -94,6 +94,12 @@ class DispatchTree:
     def add_subscriber(self, subscriber: Subscriber) -> None:
         self._subscribers.append(subscriber)
 
+    def check_command_admission(self) -> None:
+        self._lifecycle.check_command_admission()
+
+    def check_event_admission(self) -> None:
+        self._lifecycle.check_event_admission()
+
     async def send(self, command: Any) -> Any:
         async with self._lifecycle.admit_command():
             return await self._send(command)
@@ -399,14 +405,9 @@ class DispatchTree:
         task.add_done_callback(self._event_tasks.discard)
         return task
 
-    async def _drain(self) -> None:
-        while self._event_tasks:
-            await asyncio.gather(*tuple(self._event_tasks), return_exceptions=True)
-
     def aclose(self) -> Coroutine[Any, Any, None]:
         return self._lifecycle.close(self._cleanup_runtime)
 
     async def _cleanup_runtime(self) -> None:
-        await self._drain()
         if self._owns_executor:
             self._executor.shutdown(wait=True)

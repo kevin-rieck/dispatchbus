@@ -33,6 +33,16 @@ class BusLifecycle:
     def admit_event(self) -> AbstractAsyncContextManager[None]:
         return self._admit("publish")
 
+    def check_command_admission(self) -> None:
+        with self._state_lock:
+            if self._state is not BusState.OPEN:
+                raise BusDrainingError("message bus is draining")
+
+    def check_event_admission(self) -> None:
+        with self._state_lock:
+            if self._state is not BusState.OPEN:
+                raise BusDrainingError("message bus is draining")
+
     @asynccontextmanager
     async def _admit(self, operation: Literal["send", "publish"]) -> AsyncIterator[None]:
         token = self._claim_admission(operation)

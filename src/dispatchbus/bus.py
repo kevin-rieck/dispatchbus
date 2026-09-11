@@ -69,14 +69,18 @@ class MessageBus:
             raise BusUsageError(
                 "send_sync() cannot run inside an active event loop; use await bus.send(...)"
             )
-        return self._sync_bridge.run(self.send(command), timeout=timeout)
+        with self._close_lock:
+            self._dispatch_tree.check_command_admission()
+            return self._sync_bridge.run(self.send(command), timeout=timeout)
 
     def publish_sync(self, event: Any, timeout: float | None = None) -> None:
         if self._in_running_loop_thread():
             raise BusUsageError(
                 "publish_sync() cannot run inside an active event loop; use await bus.publish(...)"
             )
-        self._sync_bridge.run(self.publish(event), timeout=timeout)
+        with self._close_lock:
+            self._dispatch_tree.check_event_admission()
+            self._sync_bridge.run(self.publish(event), timeout=timeout)
 
     def close(self) -> None:
         if self._in_running_loop_thread():
@@ -87,12 +91,19 @@ class MessageBus:
         asyncio.run(self.aclose())
 
     async def aclose(self) -> None:
-        with self._close_lock:
+        await self._acquire_close_lock()
+        try:
             if self._close_future is None:
                 close_operation = self._dispatch_tree.aclose()
                 self._close_future = Future()
-                asyncio.create_task(self._close_runtime(close_operation))
+                threading.Thread(
+                    target=self._run_close_runtime,
+                    args=(close_operation,),
+                    daemon=True,
+                ).start()
             close_future = self._close_future
+        finally:
+            self._close_lock.release()
 
         close_error: BaseException | None = None
         try:
@@ -109,6 +120,9 @@ class MessageBus:
                     raise
         if close_error is not None:
             raise close_error
+
+    def _run_close_runtime(self, close_operation: Coroutine[Any, Any, None]) -> None:
+        asyncio.run(self._close_runtime(close_operation))
 
     async def _close_runtime(self, close_operation: Coroutine[Any, Any, None]) -> None:
         assert self._close_future is not None
@@ -128,6 +142,10 @@ class MessageBus:
             close_future.set_exception(close_error)
         else:
             close_future.set_result(None)
+
+    async def _acquire_close_lock(self) -> None:
+        while not self._close_lock.acquire(blocking=False):
+            await asyncio.sleep(0)
 
     def _close_sync_bridge_once(self) -> None:
         with self._close_lock:

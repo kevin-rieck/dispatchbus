@@ -1748,6 +1748,29 @@ def test_concurrent_send_sync_starts_only_one_background_thread(
     bus.close()
 
 
+def test_send_sync_rejects_before_submitting_after_close(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bus = MessageBus()
+    submitted = False
+    original_run = SyncBridge.run
+
+    def run(bridge: SyncBridge, coroutine, timeout=None):
+        nonlocal submitted
+        submitted = True
+        return original_run(bridge, coroutine, timeout=timeout)
+
+    monkeypatch.setattr(SyncBridge, "run", run)
+    bus.close()
+
+    with pytest.raises(BusDrainingError, match="message bus is draining"):
+        bus.send_sync(root_add_user(name="ada"))
+    with pytest.raises(BusDrainingError, match="message bus is draining"):
+        bus.publish_sync(root_user_added(user_id=1))
+
+    assert submitted is False
+
+
 def test_close_rejects_new_sync_work() -> None:
     bus = MessageBus()
 
@@ -1839,6 +1862,31 @@ async def test_simultaneous_aclose_runs_runtime_cleanup_once(
     assert shutdown_calls == 1
 
 
+def test_aclose_transition_survives_waiter_loop_shutdown() -> None:
+    bus = MessageBus()
+    started = threading.Event()
+
+    async def handler(command: AddUser) -> str:
+        started.set()
+        await asyncio.Event().wait()
+        return command.name
+
+    bus.register_command_handler(AddUser, handler)
+
+    async def cancel_waiter() -> None:
+        send_task = asyncio.create_task(bus.send(root_add_user(name="ada")))
+        await asyncio.to_thread(started.wait, 1)
+        close_task = asyncio.create_task(bus.aclose())
+        await asyncio.sleep(0)
+        close_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await close_task
+        send_task.cancel()
+
+    asyncio.run(cancel_waiter())
+    asyncio.run(bus.aclose())
+
+
 @pytest.mark.asyncio
 async def test_cancelled_aclose_waiter_does_not_cancel_shared_close(
     monkeypatch: pytest.MonkeyPatch,
@@ -1875,6 +1923,7 @@ async def test_cancelled_aclose_waiter_does_not_cancel_shared_close(
     release.set()
     assert await send_task == "ada"
     await asyncio.wait_for(cleanup_finished.wait(), timeout=1)
+    await asyncio.wait_for(bus.aclose(), timeout=1)
 
     with pytest.raises(BusDrainingError, match="message bus is draining"):
         await bus.send(root_add_user(name="grace"))
