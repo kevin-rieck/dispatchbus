@@ -94,11 +94,8 @@ class DispatchTree:
     def add_subscriber(self, subscriber: Subscriber) -> None:
         self._subscribers.append(subscriber)
 
-    def check_command_admission(self) -> None:
-        self._lifecycle.check_command_admission()
-
-    def check_event_admission(self) -> None:
-        self._lifecycle.check_event_admission()
+    def check_admission(self) -> None:
+        self._lifecycle.check_admission()
 
     async def send(self, command: Any) -> Any:
         async with self._lifecycle.admit_command():

@@ -70,7 +70,7 @@ class MessageBus:
                 "send_sync() cannot run inside an active event loop; use await bus.send(...)"
             )
         with self._close_lock:
-            self._dispatch_tree.check_command_admission()
+            self._dispatch_tree.check_admission()
             return self._sync_bridge.run(self.send(command), timeout=timeout)
 
     def publish_sync(self, event: Any, timeout: float | None = None) -> None:
@@ -79,7 +79,7 @@ class MessageBus:
                 "publish_sync() cannot run inside an active event loop; use await bus.publish(...)"
             )
         with self._close_lock:
-            self._dispatch_tree.check_event_admission()
+            self._dispatch_tree.check_admission()
             self._sync_bridge.run(self.publish(event), timeout=timeout)
 
     def close(self) -> None:
@@ -110,14 +110,10 @@ class MessageBus:
             await asyncio.shield(asyncio.wrap_future(close_future))
         except BaseException as exc:
             close_error = exc
-        if threading.current_thread() is not self._sync_bridge._thread and not isinstance(
-            close_error, asyncio.CancelledError
-        ):
-            try:
-                await asyncio.to_thread(self._close_sync_bridge_once)
-            except BaseException:
-                if close_error is None:
-                    raise
+        if not isinstance(close_error, asyncio.CancelledError):
+            bridge_error = await self._close_sync_bridge_if_needed()
+            if bridge_error is not None and close_error is None:
+                raise bridge_error
         if close_error is not None:
             raise close_error
 
@@ -132,12 +128,9 @@ class MessageBus:
             await close_operation
         except BaseException as exc:
             close_error = exc
-        if threading.current_thread() is not self._sync_bridge._thread:
-            try:
-                await asyncio.to_thread(self._close_sync_bridge_once)
-            except BaseException as exc:
-                if close_error is None:
-                    close_error = exc
+        bridge_error = await self._close_sync_bridge_if_needed()
+        if bridge_error is not None and close_error is None:
+            close_error = bridge_error
         if close_error is not None:
             close_future.set_exception(close_error)
         else:
@@ -147,9 +140,18 @@ class MessageBus:
         while not self._close_lock.acquire(blocking=False):
             await asyncio.sleep(0)
 
+    async def _close_sync_bridge_if_needed(self) -> BaseException | None:
+        if self._sync_bridge.is_worker_thread():
+            return None
+        try:
+            await asyncio.to_thread(self._close_sync_bridge_once)
+        except BaseException as exc:
+            return exc
+        return None
+
     def _close_sync_bridge_once(self) -> None:
         with self._close_lock:
-            if self._sync_bridge_close_started or self._sync_bridge._loop is None:
+            if self._sync_bridge_close_started or not self._sync_bridge.is_started():
                 return
             self._sync_bridge_close_started = True
         self._sync_bridge.close()
