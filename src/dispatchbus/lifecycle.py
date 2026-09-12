@@ -1,10 +1,10 @@
 import asyncio
 import contextvars
 import threading
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from enum import Enum, auto
-from typing import Literal
+from typing import Any, Literal
 
 from dispatchbus.exceptions import BusDrainingError
 
@@ -33,15 +33,20 @@ class BusLifecycle:
     def admit_event(self) -> AbstractAsyncContextManager[None]:
         return self._admit("publish")
 
+    def check_admission(self) -> None:
+        with self._state_lock:
+            if self._state is not BusState.OPEN:
+                raise BusDrainingError("message bus is draining")
+
     @asynccontextmanager
     async def _admit(self, operation: Literal["send", "publish"]) -> AsyncIterator[None]:
-        token = self._enter(operation)
+        token = self._claim_admission(operation)
         try:
             yield
         finally:
-            self._leave_dispatch(token)
+            self._exit_admission(token)
 
-    def _enter(self, operation: str) -> contextvars.Token[int]:
+    def _claim_admission(self, operation: str) -> contextvars.Token[int]:
         current_depth = self._accepted_dispatch_depth.get()
         with self._state_lock:
             if self._state is BusState.CLOSED:
@@ -54,22 +59,23 @@ class BusLifecycle:
             self._drained.clear()
         return self._accepted_dispatch_depth.set(current_depth + 1)
 
-    def _leave_dispatch(self, token: contextvars.Token[int]) -> None:
+    def _exit_admission(self, token: contextvars.Token[int]) -> None:
         self._accepted_dispatch_depth.reset(token)
         with self._state_lock:
             self._in_flight_dispatches -= 1
             if self._in_flight_dispatches == 0:
                 self._drained.set()
 
-    async def begin_close(self, *, block: bool = True) -> None:
+    def close(self, cleanup: Callable[[], Awaitable[None]]) -> Coroutine[Any, Any, None]:
         with self._state_lock:
-            if self._state is BusState.CLOSED:
-                return
-            self._state = BusState.DRAINING
-            drained = self._drained.is_set()
-        if block and not drained:
-            await asyncio.to_thread(self._drained.wait)
+            if self._state is not BusState.CLOSED:
+                self._state = BusState.DRAINING
+        return self._run_close(cleanup)
 
-    async def finish_close(self) -> None:
-        with self._state_lock:
-            self._state = BusState.CLOSED
+    async def _run_close(self, cleanup: Callable[[], Awaitable[None]]) -> None:
+        try:
+            await asyncio.to_thread(self._drained.wait)
+            await cleanup()
+        finally:
+            with self._state_lock:
+                self._state = BusState.CLOSED

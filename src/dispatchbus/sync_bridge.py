@@ -18,6 +18,12 @@ class SyncBridge:
         future: Future[Any] = asyncio.run_coroutine_threadsafe(coroutine, self._loop)
         return future.result(timeout=timeout)
 
+    def is_worker_thread(self) -> bool:
+        return threading.current_thread() is self._thread
+
+    def is_started(self) -> bool:
+        return self._loop is not None
+
     def close(self) -> None:
         if self._loop is None:
             return

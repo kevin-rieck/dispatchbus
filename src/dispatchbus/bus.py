@@ -1,6 +1,7 @@
 import asyncio
-from collections.abc import Sequence
-from concurrent.futures import Executor
+import threading
+from collections.abc import Coroutine, Sequence
+from concurrent.futures import Executor, Future
 from typing import Any
 
 from dispatchbus.dispatch_tree import DispatchTree, EventConcurrency
@@ -30,6 +31,9 @@ class MessageBus:
             error_handler=error_handler,
         )
         self._sync_bridge = SyncBridge()
+        self._close_lock = threading.Lock()
+        self._close_future: Future[None] | None = None
+        self._sync_bridge_close_started = False
 
     async def __aenter__(self) -> "MessageBus":
         return self
@@ -65,14 +69,18 @@ class MessageBus:
             raise BusUsageError(
                 "send_sync() cannot run inside an active event loop; use await bus.send(...)"
             )
-        return self._sync_bridge.run(self.send(command), timeout=timeout)
+        with self._close_lock:
+            self._dispatch_tree.check_admission()
+            return self._sync_bridge.run(self.send(command), timeout=timeout)
 
     def publish_sync(self, event: Any, timeout: float | None = None) -> None:
         if self._in_running_loop_thread():
             raise BusUsageError(
                 "publish_sync() cannot run inside an active event loop; use await bus.publish(...)"
             )
-        self._sync_bridge.run(self.publish(event), timeout=timeout)
+        with self._close_lock:
+            self._dispatch_tree.check_admission()
+            self._sync_bridge.run(self.publish(event), timeout=timeout)
 
     def close(self) -> None:
         if self._in_running_loop_thread():
@@ -80,19 +88,73 @@ class MessageBus:
                 "close() cannot run inside an active event loop; "
                 "use await bus.aclose() from async code"
             )
-        if self._sync_bridge._loop is None:
-            asyncio.run(self._drain_and_close_runtime())
-            return
-
-        self._sync_bridge.run(self._drain_and_close_runtime())
-        self._sync_bridge.close()
+        asyncio.run(self.aclose())
 
     async def aclose(self) -> None:
-        await self._drain_and_close_runtime()
-        await self._sync_bridge.aclose()
+        await self._acquire_close_lock()
+        try:
+            if self._close_future is None:
+                close_operation = self._dispatch_tree.aclose()
+                self._close_future = Future()
+                threading.Thread(
+                    target=self._run_close_runtime,
+                    args=(close_operation,),
+                    daemon=True,
+                ).start()
+            close_future = self._close_future
+        finally:
+            self._close_lock.release()
 
-    async def _drain_and_close_runtime(self) -> None:
-        await self._dispatch_tree.aclose()
+        close_error: BaseException | None = None
+        try:
+            await asyncio.shield(asyncio.wrap_future(close_future))
+        except BaseException as exc:
+            close_error = exc
+        if not isinstance(close_error, asyncio.CancelledError):
+            bridge_error = await self._close_sync_bridge_if_needed()
+            if bridge_error is not None and close_error is None:
+                raise bridge_error
+        if close_error is not None:
+            raise close_error
+
+    def _run_close_runtime(self, close_operation: Coroutine[Any, Any, None]) -> None:
+        asyncio.run(self._close_runtime(close_operation))
+
+    async def _close_runtime(self, close_operation: Coroutine[Any, Any, None]) -> None:
+        assert self._close_future is not None
+        close_future = self._close_future
+        close_error: BaseException | None = None
+        try:
+            await close_operation
+        except BaseException as exc:
+            close_error = exc
+        bridge_error = await self._close_sync_bridge_if_needed()
+        if bridge_error is not None and close_error is None:
+            close_error = bridge_error
+        if close_error is not None:
+            close_future.set_exception(close_error)
+        else:
+            close_future.set_result(None)
+
+    async def _acquire_close_lock(self) -> None:
+        while not self._close_lock.acquire(blocking=False):
+            await asyncio.sleep(0)
+
+    async def _close_sync_bridge_if_needed(self) -> BaseException | None:
+        if self._sync_bridge.is_worker_thread():
+            return None
+        try:
+            await asyncio.to_thread(self._close_sync_bridge_once)
+        except BaseException as exc:
+            return exc
+        return None
+
+    def _close_sync_bridge_once(self) -> None:
+        with self._close_lock:
+            if self._sync_bridge_close_started or not self._sync_bridge.is_started():
+                return
+            self._sync_bridge_close_started = True
+        self._sync_bridge.close()
 
     def _require_command_instance(self, message: Any) -> None:
         if not isinstance(message, CommandBase):

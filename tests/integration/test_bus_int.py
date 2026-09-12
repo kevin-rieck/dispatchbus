@@ -1748,6 +1748,29 @@ def test_concurrent_send_sync_starts_only_one_background_thread(
     bus.close()
 
 
+def test_send_sync_rejects_before_submitting_after_close(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bus = MessageBus()
+    submitted = False
+    original_run = SyncBridge.run
+
+    def run(bridge: SyncBridge, coroutine, timeout=None):
+        nonlocal submitted
+        submitted = True
+        return original_run(bridge, coroutine, timeout=timeout)
+
+    monkeypatch.setattr(SyncBridge, "run", run)
+    bus.close()
+
+    with pytest.raises(BusDrainingError, match="message bus is draining"):
+        bus.send_sync(root_add_user(name="ada"))
+    with pytest.raises(BusDrainingError, match="message bus is draining"):
+        bus.publish_sync(root_user_added(user_id=1))
+
+    assert submitted is False
+
+
 def test_close_rejects_new_sync_work() -> None:
     bus = MessageBus()
 
@@ -1796,6 +1819,208 @@ def test_publish_sync_rejects_new_work_after_close() -> None:
 
     with pytest.raises(BusDrainingError, match="message bus is draining"):
         bus.publish_sync(root_user_added(user_id=2))
+
+
+@pytest.mark.asyncio
+async def test_simultaneous_aclose_runs_runtime_cleanup_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executor = ThreadPoolExecutor(max_workers=1)
+    shutdown_calls = 0
+    original_shutdown = executor.shutdown
+
+    def shutdown(*, wait: bool = True, cancel_futures: bool = False) -> None:
+        nonlocal shutdown_calls
+        shutdown_calls += 1
+        original_shutdown(wait=wait, cancel_futures=cancel_futures)
+
+    monkeypatch.setattr(executor, "shutdown", shutdown)
+    monkeypatch.setattr("dispatchbus.dispatch_tree.ThreadPoolExecutor", lambda: executor)
+    bus = MessageBus()
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def handler(command: AddUser) -> str:
+        started.set()
+        await release.wait()
+        return command.name
+
+    bus.register_command_handler(AddUser, handler)
+    send_task = asyncio.create_task(bus.send(root_add_user(name="ada")))
+    await started.wait()
+
+    first_close = asyncio.create_task(bus.aclose())
+    second_close = asyncio.create_task(bus.aclose())
+    await asyncio.sleep(0)
+    assert not first_close.done()
+    assert not second_close.done()
+
+    release.set()
+    assert await send_task == "ada"
+    await asyncio.gather(first_close, second_close)
+
+    assert shutdown_calls == 1
+
+
+def test_aclose_transition_survives_waiter_loop_shutdown() -> None:
+    bus = MessageBus()
+    started = threading.Event()
+
+    async def handler(command: AddUser) -> str:
+        started.set()
+        await asyncio.Event().wait()
+        return command.name
+
+    bus.register_command_handler(AddUser, handler)
+
+    async def cancel_waiter() -> None:
+        send_task = asyncio.create_task(bus.send(root_add_user(name="ada")))
+        await asyncio.to_thread(started.wait, 1)
+        close_task = asyncio.create_task(bus.aclose())
+        await asyncio.sleep(0)
+        close_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await close_task
+        send_task.cancel()
+
+    asyncio.run(cancel_waiter())
+    asyncio.run(bus.aclose())
+
+
+@pytest.mark.asyncio
+async def test_cancelled_aclose_waiter_does_not_cancel_shared_close(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executor = ThreadPoolExecutor(max_workers=1)
+    original_shutdown = executor.shutdown
+    cleanup_finished = asyncio.Event()
+
+    def shutdown(*, wait: bool = True, cancel_futures: bool = False) -> None:
+        original_shutdown(wait=wait, cancel_futures=cancel_futures)
+        cleanup_finished.set()
+
+    monkeypatch.setattr(executor, "shutdown", shutdown)
+    monkeypatch.setattr("dispatchbus.dispatch_tree.ThreadPoolExecutor", lambda: executor)
+    bus = MessageBus()
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def handler(command: AddUser) -> str:
+        started.set()
+        await release.wait()
+        return command.name
+
+    bus.register_command_handler(AddUser, handler)
+    send_task = asyncio.create_task(bus.send(root_add_user(name="ada")))
+    await started.wait()
+
+    close_task = asyncio.create_task(bus.aclose())
+    await asyncio.sleep(0)
+    close_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await close_task
+
+    release.set()
+    assert await send_task == "ada"
+    await asyncio.wait_for(cleanup_finished.wait(), timeout=1)
+    await asyncio.wait_for(bus.aclose(), timeout=1)
+
+    with pytest.raises(BusDrainingError, match="message bus is draining"):
+        await bus.send(root_add_user(name="grace"))
+
+
+@pytest.mark.asyncio
+async def test_cleanup_failure_closes_bus_and_is_shared_by_close_waiters(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executor = ThreadPoolExecutor(max_workers=1)
+    cleanup_error = RuntimeError("cleanup failed")
+
+    def shutdown(*, wait: bool = True, cancel_futures: bool = False) -> None:
+        raise cleanup_error
+
+    monkeypatch.setattr(executor, "shutdown", shutdown)
+    monkeypatch.setattr("dispatchbus.dispatch_tree.ThreadPoolExecutor", lambda: executor)
+    bus = MessageBus()
+
+    first_close = asyncio.create_task(bus.aclose())
+    second_close = asyncio.create_task(bus.aclose())
+    outcomes = await asyncio.gather(first_close, second_close, return_exceptions=True)
+
+    assert outcomes == [cleanup_error, cleanup_error]
+    assert outcomes[0] is outcomes[1]
+    with pytest.raises(BusDrainingError, match="message bus is draining"):
+        await bus.send(root_add_user(name="grace"))
+
+
+@pytest.mark.asyncio
+async def test_close_and_aclose_wait_for_the_same_sync_bridge_shutdown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bus = MessageBus()
+
+    def handler(command: AddUser) -> str:
+        return command.name
+
+    bus.register_command_handler(AddUser, handler)
+    assert await asyncio.to_thread(bus.send_sync, root_add_user(name="ada")) == "ada"
+
+    close_started = threading.Event()
+    allow_close = threading.Event()
+    original_close = SyncBridge.close
+
+    def blocked_close(bridge: SyncBridge) -> None:
+        close_started.set()
+        assert allow_close.wait(timeout=1)
+        original_close(bridge)
+
+    monkeypatch.setattr(SyncBridge, "close", blocked_close)
+    async_close = asyncio.create_task(bus.aclose())
+    assert await asyncio.to_thread(close_started.wait, 1)
+
+    close_errors: list[BaseException] = []
+
+    def run_close() -> None:
+        try:
+            bus.close()
+        except BaseException as exc:
+            close_errors.append(exc)
+
+    close_thread = threading.Thread(target=run_close, daemon=True)
+    close_thread.start()
+    await asyncio.sleep(0.05)
+    allow_close.set()
+
+    await asyncio.wait_for(async_close, timeout=1)
+    await asyncio.to_thread(close_thread.join, 1)
+    assert not close_thread.is_alive()
+    assert close_errors == []
+
+
+@pytest.mark.asyncio
+async def test_simultaneous_aclose_closes_the_sync_bridge_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    close_calls = 0
+    original_close = SyncBridge.close
+
+    def close(bridge: SyncBridge) -> None:
+        nonlocal close_calls
+        close_calls += 1
+        original_close(bridge)
+
+    monkeypatch.setattr(SyncBridge, "close", close)
+    bus = MessageBus()
+
+    def handler(command: AddUser) -> str:
+        return command.name
+
+    bus.register_command_handler(AddUser, handler)
+    assert await asyncio.to_thread(bus.send_sync, root_add_user(name="ada")) == "ada"
+
+    await asyncio.gather(bus.aclose(), bus.aclose())
+
+    assert close_calls == 1
 
 
 @pytest.mark.asyncio
